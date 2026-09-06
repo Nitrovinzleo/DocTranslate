@@ -136,6 +136,8 @@ export async function processPdfFile(
     let currentPage = initialPage;
 
     // Draw background original page (images, borders, graphics)
+    let backgroundDrawn = false;
+
     if (embeddedPages && embeddedPages[pageNum - 1]) {
       try {
         initialPage.drawPage(embeddedPages[pageNum - 1], {
@@ -144,8 +146,39 @@ export async function processPdfFile(
           width: viewport.width,
           height: viewport.height,
         });
+        backgroundDrawn = true;
       } catch (e) {
-        console.warn('Could not draw embedded page background:', e);
+        console.warn('Could not draw embedded page vector background:', e);
+      }
+    }
+
+    // High-Fidelity Fallback for images & artwork if vector embedding is unavailable
+    if (!backgroundDrawn) {
+      try {
+        const renderScale = 1.5; // High resolution for crisp images & graphics
+        const bgCanvas = document.createElement('canvas');
+        const bgCtx = bgCanvas.getContext('2d');
+        const bgViewport = page.getViewport({ scale: renderScale });
+        bgCanvas.width = bgViewport.width;
+        bgCanvas.height = bgViewport.height;
+
+        const bgRenderTask = (page as any).render({ canvasContext: bgCtx, viewport: bgViewport, canvas: bgCanvas } as any);
+        await bgRenderTask.promise;
+
+        const imageBlob = await new Promise<Blob | null>(resolve => bgCanvas.toBlob(resolve, 'image/jpeg', 0.88));
+        if (imageBlob) {
+          const imageBuffer = await imageBlob.arrayBuffer();
+          const embeddedJpg = await pdfDoc.embedJpg(imageBuffer);
+          initialPage.drawImage(embeddedJpg, {
+            x: 0,
+            y: 0,
+            width: viewport.width,
+            height: viewport.height,
+          });
+          backgroundDrawn = true;
+        }
+      } catch (err) {
+        console.warn('Canvas background rendering fallback warning:', err);
       }
     }
 
