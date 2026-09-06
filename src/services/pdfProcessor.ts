@@ -88,8 +88,9 @@ export async function processPdfFile(
   try {
     const srcPdfDoc = await PDFDocument.load(arrayBuffer.slice(0), { ignoreEncryption: true });
     embeddedPages = await pdfDoc.embedPdf(srcPdfDoc);
-  } catch (err) {
-    console.warn('embedPdf ignoreEncryption load warning:', err);
+  } catch (_err) {
+    // Non-fatal: If pdf-lib cannot embed vectors due to non-standard indirect PDF objects,
+    // the processor seamlessly falls back to pdf.js text rendering & canvas background.
   }
 
   const sections: DocumentSection[] = [];
