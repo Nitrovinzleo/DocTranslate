@@ -1,4 +1,64 @@
-export default async function handler(req: Request) {
+export const config = {
+  runtime: 'edge',
+};
+
+async function processBatch(inputTexts: string[], sourceLang: string, targetLang: string): Promise<string[]> {
+  return Promise.all(
+    inputTexts.map(async (text) => {
+      if (!text || !text.trim() || /^[\d\s\W]+$/.test(text.trim())) {
+        return text;
+      }
+
+      const cleanText = text.trim();
+
+      // Provider 1: Google GTX Unofficial API (High Reliability & Speed)
+      try {
+        const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(cleanText)}`;
+        const gtxRes = await fetch(gtxUrl, { signal: AbortSignal.timeout(4000) });
+        if (gtxRes.ok) {
+          const data = await gtxRes.json();
+          if (Array.isArray(data) && Array.isArray(data[0])) {
+            const transStr = data[0].map((item: any) => item[0]).join('');
+            if (transStr && transStr.trim()) return transStr;
+          }
+        }
+      } catch (e) {
+        // fallback
+      }
+
+      // Provider 2: Lingva API
+      try {
+        const lingvaUrl = `https://lingva.ml/api/v1/${sourceLang}/${targetLang}/${encodeURIComponent(cleanText)}`;
+        const lingvaRes = await fetch(lingvaUrl, { signal: AbortSignal.timeout(3500) });
+        if (lingvaRes.ok) {
+          const data = await lingvaRes.json();
+          if (data.translation) return data.translation;
+        }
+      } catch (e) {
+        // fallback
+      }
+
+      // Provider 3: MyMemory API
+      try {
+        const langPair = `${sourceLang}|${targetLang}`;
+        const myMemUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanText)}&langpair=${langPair}`;
+        const myMemRes = await fetch(myMemUrl, { signal: AbortSignal.timeout(3500) });
+        if (myMemRes.ok) {
+          const data = await myMemRes.json();
+          if (data.responseData?.translatedText && !data.responseData.translatedText.includes('MYMEMORY WARNING')) {
+            return data.responseData.translatedText;
+          }
+        }
+      } catch (e) {
+        // fallback
+      }
+
+      return text;
+    })
+  );
+}
+
+async function handleTranslationRequest(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
@@ -11,7 +71,6 @@ export default async function handler(req: Request) {
     const sourceLang = body.sourceLang || 'en';
     const targetLang = body.targetLang || 'fr';
 
-    // Support single text string or batch array of texts
     const inputTexts: string[] = Array.isArray(body.texts) 
       ? body.texts 
       : body.text 
@@ -28,60 +87,7 @@ export default async function handler(req: Request) {
       });
     }
 
-    // Process batch items in parallel with zero-log confidential translation providers
-    const translatedTexts = await Promise.all(
-      inputTexts.map(async (text) => {
-        if (!text || !text.trim() || /^[\d\s\W]+$/.test(text.trim())) {
-          return text;
-        }
-
-        const cleanText = text.trim();
-
-        // Provider 1: Google GTX Unofficial API (High Reliability & Speed)
-        try {
-          const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(cleanText)}`;
-          const gtxRes = await fetch(gtxUrl, { signal: AbortSignal.timeout(4000) });
-          if (gtxRes.ok) {
-            const data = await gtxRes.json();
-            if (Array.isArray(data) && Array.isArray(data[0])) {
-              const transStr = data[0].map((item: any) => item[0]).join('');
-              if (transStr && transStr.trim()) return transStr;
-            }
-          }
-        } catch (e) {
-          // fallback
-        }
-
-        // Provider 2: Lingva API
-        try {
-          const lingvaUrl = `https://lingva.ml/api/v1/${sourceLang}/${targetLang}/${encodeURIComponent(cleanText)}`;
-          const lingvaRes = await fetch(lingvaUrl, { signal: AbortSignal.timeout(3500) });
-          if (lingvaRes.ok) {
-            const data = await lingvaRes.json();
-            if (data.translation) return data.translation;
-          }
-        } catch (e) {
-          // fallback
-        }
-
-        // Provider 3: MyMemory API
-        try {
-          const langPair = `${sourceLang}|${targetLang}`;
-          const myMemUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanText)}&langpair=${langPair}`;
-          const myMemRes = await fetch(myMemUrl, { signal: AbortSignal.timeout(3500) });
-          if (myMemRes.ok) {
-            const data = await myMemRes.json();
-            if (data.responseData?.translatedText && !data.responseData.translatedText.includes('MYMEMORY WARNING')) {
-              return data.responseData.translatedText;
-            }
-          }
-        } catch (e) {
-          // fallback
-        }
-
-        return text;
-      })
-    );
+    const translatedTexts = await processBatch(inputTexts, sourceLang, targetLang);
 
     return new Response(JSON.stringify({ 
       translatedText: translatedTexts[0] || '',
@@ -99,4 +105,38 @@ export default async function handler(req: Request) {
       headers: { 'Content-Type': 'application/json' },
     });
   }
+}
+
+export async function POST(req: Request) {
+  return handleTranslationRequest(req);
+}
+
+export async function GET(req: Request) {
+  return handleTranslationRequest(req);
+}
+
+export default async function handler(req: any, res?: any) {
+  if (typeof req.json === 'function') {
+    return handleTranslationRequest(req);
+  }
+  
+  if (res && typeof res.end === 'function') {
+    let bodyStr = '';
+    for await (const chunk of req) {
+      bodyStr += chunk;
+    }
+    const body = JSON.parse(bodyStr || '{}');
+    const sourceLang = body.sourceLang || 'en';
+    const targetLang = body.targetLang || 'fr';
+    const inputTexts: string[] = Array.isArray(body.texts) ? body.texts : body.text ? [body.text] : [];
+    
+    const translatedTexts = await processBatch(inputTexts, sourceLang, targetLang);
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.end(JSON.stringify({ translatedText: translatedTexts[0] || '', translatedTexts }));
+    return;
+  }
+
+  return handleTranslationRequest(req);
 }
