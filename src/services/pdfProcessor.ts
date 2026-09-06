@@ -63,12 +63,13 @@ export async function processPdfFile(
 
   const pdfDoc = await PDFDocument.create();
 
-  // Embed original PDF pages as vector background templates
+  // Load input PDF with ignoreEncryption: true to support protected/encrypted PDF files cleanly
   let embeddedPages: any[] = [];
   try {
-    embeddedPages = await pdfDoc.embedPdf(arrayBuffer.slice(0));
+    const srcPdfDoc = await PDFDocument.load(arrayBuffer.slice(0), { ignoreEncryption: true });
+    embeddedPages = await pdfDoc.embedPdf(srcPdfDoc);
   } catch (err) {
-    console.warn('embedPdf warning:', err);
+    console.warn('embedPdf ignoreEncryption load warning:', err);
   }
 
   const sections: DocumentSection[] = [];
