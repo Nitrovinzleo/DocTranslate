@@ -185,13 +185,22 @@ export async function processPdfFile(
       // Vector PDF text items: Group items into horizontal lines (by Y coordinate)
       const validItems = textItems.filter(item => item.str && item.str.trim().length > 0);
 
+      interface LineItem {
+        str: string;
+        x: number;
+        y: number;
+        fontSize: number;
+        width: number;
+      }
+
       interface LineGroup {
         y: number;
         minX: number;
         maxX: number;
         maxFontSize: number;
         isHeading: boolean;
-        rawTexts: string[];
+        isFooterBrand: boolean;
+        items: LineItem[];
       }
 
       const lineGroups: LineGroup[] = [];
@@ -206,34 +215,40 @@ export async function processPdfFile(
         const fontSize = Math.abs(transform[0]) || Math.abs(transform[3]) || 12;
         const approxWidth = (item.width || str.length * fontSize * 0.5);
 
-        // Find existing line group matching Y coordinate
-        let group = lineGroups.find(g => Math.abs(g.y - y) < 4);
+        const isFooterBrand = y <= 45 || y >= viewport.height - 35 || /^gaumont$/i.test(str) || /^\d{1,3}$/.test(str);
+
+        // Group items within 7px vertical Y distance
+        let group = lineGroups.find(g => Math.abs(g.y - y) <= 7);
         if (!group) {
           group = {
             y,
             minX: x,
             maxX: x + approxWidth,
             maxFontSize: fontSize,
-            isHeading: fontSize >= 14 || (str.length < 50 && str === str.toUpperCase() && /^[A-Z\s]{4,}$/.test(str)),
-            rawTexts: [str],
+            isHeading: !isFooterBrand && (fontSize >= 14 || (str.length < 40 && str === str.toUpperCase() && /^[A-Z\s]{4,}$/.test(str))),
+            isFooterBrand,
+            items: [{ str, x, y, fontSize, width: approxWidth }],
           };
           lineGroups.push(group);
         } else {
           group.minX = Math.min(group.minX, x);
           group.maxX = Math.max(group.maxX, x + approxWidth);
           group.maxFontSize = Math.max(group.maxFontSize, fontSize);
-          if (fontSize >= 14 || (str.length < 50 && str === str.toUpperCase())) {
+          if (!isFooterBrand && (fontSize >= 14 || (str.length < 40 && str === str.toUpperCase() && /^[A-Z\s]{4,}$/.test(str)))) {
             group.isHeading = true;
           }
-          group.rawTexts.push(str);
+          group.items.push({ str, x, y, fontSize, width: approxWidth });
         }
       }
 
       // Sort line groups vertically (top to bottom)
       lineGroups.sort((a, b) => b.y - a.y);
 
-      // Translate combined line texts
-      const combinedLineTexts = lineGroups.map(g => g.rawTexts.join(' '));
+      // Sort items inside each line left-to-right and combine text
+      const combinedLineTexts = lineGroups.map(g => {
+        g.items.sort((a, b) => a.x - b.x);
+        return g.items.map(it => it.str).join(' ');
+      });
 
       const translatedBatch = await translateTextBatch(combinedLineTexts, {
         ...options,
@@ -242,6 +257,9 @@ export async function processPdfFile(
           if (onProgress) onProgress(scaled, msg);
         }
       });
+
+      // Track vertical Y cursor to prevent line collisions
+      let currentYCursor = viewport.height - 20;
 
       for (let i = 0; i < lineGroups.length; i++) {
         const group = lineGroups[i];
@@ -260,20 +278,31 @@ export async function processPdfFile(
         const cleanTextForPdf = sanitizeForPdf(translatedLineText);
         if (!cleanTextForPdf) continue;
 
-        const fontSize = Math.min(24, Math.max(8, group.maxFontSize));
-        const activeFont = group.isHeading ? fontBold : fontRegular;
-        const fontColor = group.isHeading ? rgb(0.05, 0.05, 0.15) : rgb(0.12, 0.12, 0.25);
+        // Footer watermarks ("Gaumont", page numbers) remain small and discrete
+        let fontSize = Math.max(8, Math.min(20, group.maxFontSize));
+        if (group.isFooterBrand) {
+          fontSize = Math.min(10, fontSize);
+        }
+
+        const activeFont = (group.isHeading && !group.isFooterBrand) ? fontBold : fontRegular;
+        const fontColor = group.isFooterBrand 
+          ? rgb(0.45, 0.45, 0.5) 
+          : (group.isHeading ? rgb(0.05, 0.05, 0.15) : rgb(0.12, 0.12, 0.25));
 
         const maxW = Math.max(40, viewport.width - group.minX - 20);
         const wrappedLines = wrapTextToLines(cleanTextForPdf, fontSize, maxW);
 
-        // Erase background box (masking original English text)
-        // On Page 1 (Cover Page) or pages with sparse text (<= 6 lines), do NOT draw opaque white blocks over illustrations & artwork!
-        const isSparseGraphicPage = pageNum === 1 || lineGroups.length <= 6;
+        // Determine target Y position with collision prevention
+        let lineY = group.y;
+        if (!group.isFooterBrand) {
+          lineY = Math.min(group.y, currentYCursor - (group.isHeading ? 6 : 2));
+        }
 
-        if (!isSparseGraphicPage) {
-          const maskHeight = Math.max(fontSize * 1.18 * wrappedLines.length, 12);
-          const maskY = Math.max(0, group.y - (wrappedLines.length - 1) * fontSize * 1.15 - 1);
+        // Mask original English text with white rectangle
+        const isSparseGraphicPage = pageNum === 1 || lineGroups.length <= 5;
+        if (!isSparseGraphicPage && !group.isFooterBrand) {
+          const maskHeight = Math.max(fontSize * 1.15 * wrappedLines.length, 12);
+          const maskY = Math.max(0, lineY - (wrappedLines.length - 1) * fontSize * 1.15 - 1);
           const maskWidth = Math.min(viewport.width - group.minX, Math.max(group.maxX - group.minX + 4, 30));
 
           try {
@@ -282,19 +311,20 @@ export async function processPdfFile(
               y: maskY,
               width: maskWidth,
               height: maskHeight,
-              color: rgb(1, 1, 1), // White rectangle erases old English text underneath
+              color: rgb(1, 1, 1),
             });
           } catch (e) {
             console.warn('PDF erase background rectangle error:', e);
           }
         }
 
-        // Draw translated lines
+        // Render lines
         for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
+          const targetY = lineY - (lIdx * fontSize * 1.15);
           try {
             newPage.drawText(wrappedLines[lIdx], {
               x: Math.max(5, Math.min(viewport.width - 40, group.minX)),
-              y: Math.max(5, Math.min(viewport.height - 15, group.y - (lIdx * fontSize * 1.2))),
+              y: Math.max(5, Math.min(viewport.height - 15, targetY)),
               size: fontSize,
               font: activeFont,
               color: fontColor,
@@ -302,6 +332,10 @@ export async function processPdfFile(
           } catch (e) {
             console.warn('PDF draw line text error:', e);
           }
+        }
+
+        if (!group.isFooterBrand) {
+          currentYCursor = lineY - (fontSize * 1.15 * wrappedLines.length) - (group.isHeading ? 6 : 2);
         }
       }
     }
