@@ -23,26 +23,49 @@ function sanitizeForPdf(text: string): string {
 }
 
 /**
- * Helper to split text into wrapped lines fitting within maxPixelWidth
+ * Intelligent helper to split text into wrapped lines fitting within maxPixelWidth.
+ * Favors breaking at natural punctuation marks (., !, ?, ,, ;, :, —, «, »)
+ * and prevents cutting mid-sentence or mid-clause awkwardly.
  */
-function wrapTextToLines(text: string, fontSize: number, maxPixelWidth: number): string[] {
+function smartWrapTextToLines(text: string, fontSize: number, maxPixelWidth: number): string[] {
   if (!text) return [];
-  const words = text.split(/\s+/);
-  const lines: string[] = [];
-  let currentLine = '';
-
   const approxCharWidth = fontSize * 0.52;
   const maxCharsPerLine = Math.max(15, Math.floor(maxPixelWidth / approxCharWidth));
 
-  for (const word of words) {
-    if ((currentLine + ' ' + word).trim().length <= maxCharsPerLine) {
-      currentLine = (currentLine + ' ' + word).trim();
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+
+  const lines: string[] = [];
+  let currentLine = '';
+
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    const testLine = currentLine ? currentLine + ' ' + word : word;
+
+    if (testLine.length <= maxCharsPerLine) {
+      currentLine = testLine;
     } else {
-      if (currentLine) lines.push(currentLine);
-      currentLine = word;
+      if (!currentLine) {
+        lines.push(word);
+        currentLine = '';
+        continue;
+      }
+
+      // Check if currentLine has a natural punctuation pause (comma, semicolon, colon, period, exclamation, etc.)
+      const punctMatch = currentLine.match(/^(.*?[,;:!?.—«»])\s+(.+)$/);
+      if (punctMatch && punctMatch[1].length >= Math.floor(maxCharsPerLine * 0.35)) {
+        lines.push(punctMatch[1].trim());
+        currentLine = punctMatch[2].trim() + ' ' + word;
+      } else {
+        lines.push(currentLine.trim());
+        currentLine = word;
+      }
     }
   }
-  if (currentLine) lines.push(currentLine);
+
+  if (currentLine.trim()) {
+    lines.push(currentLine.trim());
+  }
 
   return lines;
 }
@@ -109,12 +132,13 @@ export async function processPdfFile(
     const page = await pdfjsDoc.getPage(pageNum);
     const viewport = page.getViewport({ scale: 1.0 });
 
-    const newPage = pdfDoc.addPage([viewport.width, viewport.height]);
+    const initialPage = pdfDoc.addPage([viewport.width, viewport.height]);
+    let currentPage = initialPage;
 
     // Draw background original page (images, borders, graphics)
     if (embeddedPages && embeddedPages[pageNum - 1]) {
       try {
-        newPage.drawPage(embeddedPages[pageNum - 1], {
+        initialPage.drawPage(embeddedPages[pageNum - 1], {
           x: 0,
           y: 0,
           width: viewport.width,
@@ -141,64 +165,67 @@ export async function processPdfFile(
       const renderTask = (page as any).render({ canvasContext: ctx, viewport, canvas } as any);
       await renderTask.promise;
 
-      const ocrResult = await performLocalOCR(canvas, options.sourceLang);
+      const ocrResult = await performLocalOCR(canvas, options.sourceLang, {
+        onProgress: (subPct, msg) => {
+          const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
+          if (onProgress) onProgress(scaled, msg);
+        }
+      });
 
-      if (ocrResult.lines && ocrResult.lines.length > 0) {
-        const ocrTexts = ocrResult.lines.map(l => l.text.trim()).filter(Boolean);
-        const translatedOcrBatch = await translateTextBatch(ocrTexts, {
-          ...options,
-          onProgress: (subPct, msg) => {
-            const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
-            if (onProgress) onProgress(scaled, msg);
-          }
+      const rawOcrTexts = ocrResult.lines.map(l => l.text.trim()).filter(Boolean);
+      const translatedOcrBatch = await translateTextBatch(rawOcrTexts, {
+        ...options,
+        onProgress: (subPct, msg) => {
+          const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
+          if (onProgress) onProgress(scaled, msg);
+        }
+      });
+
+      for (let idx = 0; idx < ocrResult.lines.length; idx++) {
+        const line = ocrResult.lines[idx];
+        const originalText = line.text.trim();
+        if (!originalText) continue;
+
+        const translatedText = translatedOcrBatch[idx] || originalText;
+        totalWords += originalText.split(/\s+/).filter(Boolean).length;
+
+        sections.push({
+          id: `pdf-ocr-${pageNum}-${line.bbox.y0}`,
+          originalText: `[Page ${pageNum} OCR]: ${originalText}`,
+          translatedText: `[Page ${pageNum} OCR Traduit]: ${translatedText}`,
+          type: 'image-ocr'
         });
 
-        for (let idx = 0; idx < ocrResult.lines.length; idx++) {
-          const line = ocrResult.lines[idx];
-          const originalText = line.text.trim();
-          if (!originalText) continue;
+        const cleanTextForPdf = sanitizeForPdf(translatedText);
+        if (cleanTextForPdf) {
+          const fontHeight = Math.max(9, Math.min(16, (line.bbox.y1 - line.bbox.y0)));
+          const maxW = Math.max(40, viewport.width - line.bbox.x0 - 20);
+          const wrappedLines = smartWrapTextToLines(cleanTextForPdf, fontHeight, maxW);
 
-          const translatedText = translatedOcrBatch[idx] || originalText;
-          totalWords += originalText.split(/\s+/).filter(Boolean).length;
+          // Erase background box for OCR line
+          const boxY = Math.max(0, viewport.height - line.bbox.y1 - 2);
+          const boxH = Math.max(fontHeight * 1.3, line.bbox.y1 - line.bbox.y0 + 4);
+          try {
+            currentPage.drawRectangle({
+              x: Math.max(0, line.bbox.x0 - 4),
+              y: boxY,
+              width: Math.min(viewport.width - line.bbox.x0, (line.bbox.x1 - line.bbox.x0) + 8),
+              height: boxH,
+              color: rgb(1, 1, 1),
+            });
+          } catch (e) {}
 
-          sections.push({
-            id: `pdf-ocr-${pageNum}-${line.bbox.y0}`,
-            originalText: `[Page ${pageNum} OCR]: ${originalText}`,
-            translatedText: `[Page ${pageNum} OCR Traduit]: ${translatedText}`,
-            type: 'image-ocr'
-          });
-
-          const cleanTextForPdf = sanitizeForPdf(translatedText);
-          if (cleanTextForPdf) {
-            const fontHeight = Math.max(9, Math.min(16, (line.bbox.y1 - line.bbox.y0)));
-            const maxW = Math.max(40, viewport.width - line.bbox.x0 - 20);
-            const wrappedLines = wrapTextToLines(cleanTextForPdf, fontHeight, maxW);
-
-            // Erase background box for OCR line
-            const boxY = Math.max(0, viewport.height - line.bbox.y1 - 2);
-            const boxH = Math.max(fontHeight * 1.3, line.bbox.y1 - line.bbox.y0 + 4);
+          for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
             try {
-              newPage.drawRectangle({
-                x: Math.max(0, line.bbox.x0 - 4),
-                y: boxY,
-                width: Math.min(viewport.width - line.bbox.x0, (line.bbox.x1 - line.bbox.x0) + 8),
-                height: boxH,
-                color: rgb(1, 1, 1),
+              currentPage.drawText(wrappedLines[lIdx], {
+                x: Math.max(10, Math.min(viewport.width - 50, line.bbox.x0)),
+                y: Math.max(10, viewport.height - line.bbox.y1 - (lIdx * fontHeight * 1.15)),
+                size: fontHeight,
+                font: fontRegular,
+                color: rgb(0.1, 0.1, 0.2),
               });
-            } catch (e) {}
-
-            for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
-              try {
-                newPage.drawText(wrappedLines[lIdx], {
-                  x: Math.max(10, Math.min(viewport.width - 50, line.bbox.x0)),
-                  y: Math.max(10, viewport.height - line.bbox.y1 - (lIdx * fontHeight * 1.15)),
-                  size: fontHeight,
-                  font: fontRegular,
-                  color: rgb(0.1, 0.1, 0.2),
-                });
-              } catch (e) {
-                console.warn('PDF draw OCR line warning:', e);
-              }
+            } catch (e) {
+              console.warn('PDF draw OCR line warning:', e);
             }
           }
         }
@@ -266,13 +293,69 @@ export async function processPdfFile(
       // Sort line groups vertically (top to bottom)
       lineGroups.sort((a, b) => b.y - a.y);
 
-      // Sort items inside each line left-to-right and combine text
-      const combinedLineTexts = lineGroups.map(g => {
-        g.items.sort((a, b) => a.x - b.x);
-        return g.items.map(it => it.str).join(' ');
-      });
+      // Group line groups into Paragraph Blocks for natural context translation
+      interface ParagraphBlock {
+        rawText: string;
+        minX: number;
+        maxX: number;
+        maxFontSize: number;
+        isHeading: boolean;
+        isFooterBrand: boolean;
+        y: number;
+        lineGroups: LineGroup[];
+      }
 
-      const translatedBatch = await translateTextBatch(combinedLineTexts, {
+      const paragraphBlocks: ParagraphBlock[] = [];
+      let currentBlock: ParagraphBlock | null = null;
+
+      for (let i = 0; i < lineGroups.length; i++) {
+        const g = lineGroups[i];
+        g.items.sort((a, b) => a.x - b.x);
+        const lineText = g.items.map(it => it.str).join(' ');
+
+        if (!currentBlock) {
+          currentBlock = {
+            rawText: lineText,
+            minX: g.minX,
+            maxX: g.maxX,
+            maxFontSize: g.maxFontSize,
+            isHeading: g.isHeading,
+            isFooterBrand: g.isFooterBrand,
+            y: g.y,
+            lineGroups: [g]
+          };
+          paragraphBlocks.push(currentBlock);
+        } else {
+          const prevGroup = currentBlock.lineGroups[currentBlock.lineGroups.length - 1];
+          const yGap = prevGroup.y - g.y;
+          const sameFontSize = Math.abs(prevGroup.maxFontSize - g.maxFontSize) <= 3;
+          const isSameParagraph = !g.isHeading && !g.isFooterBrand && !currentBlock.isHeading && !currentBlock.isFooterBrand && yGap > 0 && yGap <= prevGroup.maxFontSize * 2.2 && sameFontSize;
+
+          if (isSameParagraph) {
+            currentBlock.rawText += ' ' + lineText;
+            currentBlock.minX = Math.min(currentBlock.minX, g.minX);
+            currentBlock.maxX = Math.max(currentBlock.maxX, g.maxX);
+            currentBlock.maxFontSize = Math.max(currentBlock.maxFontSize, g.maxFontSize);
+            currentBlock.lineGroups.push(g);
+          } else {
+            currentBlock = {
+              rawText: lineText,
+              minX: g.minX,
+              maxX: g.maxX,
+              maxFontSize: g.maxFontSize,
+              isHeading: g.isHeading,
+              isFooterBrand: g.isFooterBrand,
+              y: g.y,
+              lineGroups: [g]
+            };
+            paragraphBlocks.push(currentBlock);
+          }
+        }
+      }
+
+      // Translate paragraph blocks in batch
+      const combinedBlockTexts = paragraphBlocks.map(b => b.rawText);
+      const translatedBatch = await translateTextBatch(combinedBlockTexts, {
         ...options,
         onProgress: (subPct, msg) => {
           const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
@@ -280,62 +363,70 @@ export async function processPdfFile(
         }
       });
 
-      // Track vertical Y cursor to prevent line collisions
-      let currentYCursor = viewport.height - 20;
+      // Track vertical Y cursor to prevent line collisions and handle page overflows
+      let currentYCursor = viewport.height - 25;
 
-      for (let i = 0; i < lineGroups.length; i++) {
-        const group = lineGroups[i];
-        const rawLineText = combinedLineTexts[i];
-        const translatedLineText = translatedBatch[i] || rawLineText;
+      for (let i = 0; i < paragraphBlocks.length; i++) {
+        const block = paragraphBlocks[i];
+        const rawBlockText = combinedBlockTexts[i];
+        const translatedBlockText = translatedBatch[i] || rawBlockText;
 
-        totalWords += rawLineText.split(/\s+/).filter(Boolean).length;
+        totalWords += rawBlockText.split(/\s+/).filter(Boolean).length;
 
         sections.push({
-          id: `pdf-p${pageNum}-line${i}`,
-          originalText: rawLineText,
-          translatedText: translatedLineText,
-          type: group.isHeading ? 'heading' : 'paragraph'
+          id: `pdf-p${pageNum}-block${i}`,
+          originalText: rawBlockText,
+          translatedText: translatedBlockText,
+          type: block.isHeading ? 'heading' : 'paragraph'
         });
 
-        const cleanTextForPdf = sanitizeForPdf(translatedLineText);
+        const cleanTextForPdf = sanitizeForPdf(translatedBlockText);
         if (!cleanTextForPdf) continue;
 
         // Footer watermarks ("Gaumont", page numbers) remain small and discrete
-        let fontSize = Math.max(8, Math.min(22, group.maxFontSize));
-        if (group.isFooterBrand) {
+        let fontSize = Math.max(8, Math.min(22, block.maxFontSize));
+        if (block.isFooterBrand) {
           fontSize = Math.min(10, fontSize);
         }
 
-        const isLargeHeading = group.isHeading && !group.isFooterBrand;
+        const isLargeHeading = block.isHeading && !block.isFooterBrand;
         const activeFont = isLargeHeading ? fontBold : fontRegular;
-        const fontColor = group.isFooterBrand 
+        const fontColor = block.isFooterBrand 
           ? rgb(0.45, 0.45, 0.5) 
           : (isLargeHeading ? rgb(0.05, 0.05, 0.15) : rgb(0.12, 0.12, 0.25));
 
-        const maxW = Math.max(40, viewport.width - group.minX - 20);
-        const wrappedLines = wrapTextToLines(cleanTextForPdf, fontSize, maxW);
+        const maxW = Math.max(40, viewport.width - block.minX - 20);
+        const wrappedLines = smartWrapTextToLines(cleanTextForPdf, fontSize, maxW);
 
-        // Generous line height & spacing gap (extra gap for large titles)
-        const fontLineHeight = isLargeHeading ? fontSize * 1.55 : fontSize * 1.35;
-        const minGapAbove = isLargeHeading ? 14 : 4;
-        const minGapBelow = isLargeHeading ? 14 : 4;
+        // Generous line height & spacing gap
+        const fontLineHeight = isLargeHeading ? fontSize * 1.55 : fontSize * 1.38;
+        const minGapAbove = isLargeHeading ? 14 : 6;
+        const minGapBelow = isLargeHeading ? 14 : 6;
 
-        // Determine target Y position with collision prevention
-        let lineY = group.y;
-        if (!group.isFooterBrand) {
-          lineY = Math.min(group.y, currentYCursor - minGapAbove);
+        let lineY = block.y;
+        if (!block.isFooterBrand) {
+          lineY = Math.min(block.y, currentYCursor - minGapAbove);
         }
 
-        // Mask original English text with white rectangle
+        // Check if this block will overflow the current page bottom margin (< 40px)
+        const blockHeightNeeded = fontLineHeight * wrappedLines.length + minGapBelow;
+        if (!block.isFooterBrand && (lineY - blockHeightNeeded < 40)) {
+          // PAGE BREAK: Create a new overflow page cleanly!
+          currentPage = pdfDoc.addPage([viewport.width, viewport.height]);
+          currentYCursor = viewport.height - 35;
+          lineY = currentYCursor - minGapAbove;
+        }
+
+        // Mask original English text with white rectangle on initial page
         const isSparseGraphicPage = pageNum === 1 || lineGroups.length <= 5;
-        if (!isSparseGraphicPage && !group.isFooterBrand) {
+        if (!isSparseGraphicPage && !block.isFooterBrand && currentPage === initialPage) {
           const maskHeight = Math.max(fontLineHeight * wrappedLines.length, 12);
           const maskY = Math.max(0, lineY - (wrappedLines.length - 1) * fontLineHeight - 1);
-          const maskWidth = Math.min(viewport.width - group.minX, Math.max(group.maxX - group.minX + 4, 30));
+          const maskWidth = Math.min(viewport.width - block.minX, Math.max(block.maxX - block.minX + 4, 30));
 
           try {
-            newPage.drawRectangle({
-              x: Math.max(0, group.minX - 2),
+            currentPage.drawRectangle({
+              x: Math.max(0, block.minX - 2),
               y: maskY,
               width: maskWidth,
               height: maskHeight,
@@ -346,12 +437,21 @@ export async function processPdfFile(
           }
         }
 
-        // Render lines
+        // Render each wrapped line of the block
         for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
-          const targetY = lineY - (lIdx * fontLineHeight);
+          let targetY = lineY - (lIdx * fontLineHeight);
+
+          // Line-level page overflow check
+          if (!block.isFooterBrand && targetY < 25) {
+            currentPage = pdfDoc.addPage([viewport.width, viewport.height]);
+            currentYCursor = viewport.height - 35;
+            lineY = currentYCursor;
+            targetY = lineY;
+          }
+
           try {
-            newPage.drawText(wrappedLines[lIdx], {
-              x: Math.max(5, Math.min(viewport.width - 40, group.minX)),
+            currentPage.drawText(wrappedLines[lIdx], {
+              x: Math.max(5, Math.min(viewport.width - 40, block.minX)),
               y: Math.max(5, Math.min(viewport.height - 15, targetY)),
               size: fontSize,
               font: activeFont,
@@ -362,7 +462,7 @@ export async function processPdfFile(
           }
         }
 
-        if (!group.isFooterBrand) {
+        if (!block.isFooterBrand) {
           currentYCursor = lineY - (wrappedLines.length * fontLineHeight) - minGapBelow;
         }
       }
