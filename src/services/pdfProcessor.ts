@@ -116,6 +116,121 @@ async function withSilencedPdfParserLogs<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+
+
+
+
+interface ExtractedPdfImage {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  imageBytes: Uint8Array;
+}
+
+/**
+ * Extracts ONLY actual embedded images (photos, drawings, logos) from a PDF page
+ * without copying old English vector text or background text paths.
+ */
+async function extractImagesFromPdfPage(
+  page: pdfjsLib.PDFPageProxy,
+  viewport: pdfjsLib.PageViewport
+): Promise<ExtractedPdfImage[]> {
+  const extracted: ExtractedPdfImage[] = [];
+  try {
+    const operatorList = await page.getOperatorList();
+    const fnArray = operatorList.fnArray;
+    const argsArray = operatorList.argsArray;
+
+    let ctmStack: number[][] = [[1, 0, 0, 1, 0, 0]];
+    let currentCtm = [1, 0, 0, 1, 0, 0];
+
+    const multiplyMatrix = (m1: number[], m2: number[]) => [
+      m1[0] * m2[0] + m1[2] * m2[1],
+      m1[1] * m2[0] + m1[3] * m2[1],
+      m1[0] * m2[2] + m1[2] * m2[3],
+      m1[1] * m2[2] + m1[3] * m2[3],
+      m1[0] * m2[4] + m1[2] * m2[5] + m1[4],
+      m1[1] * m2[4] + m1[3] * m2[5] + m1[5],
+    ];
+
+    for (let i = 0; i < fnArray.length; i++) {
+      const fn = fnArray[i];
+      const args = argsArray[i];
+
+      if (fn === pdfjsLib.OPS.save) {
+        ctmStack.push([...currentCtm]);
+      } else if (fn === pdfjsLib.OPS.restore) {
+        if (ctmStack.length > 1) {
+          currentCtm = ctmStack.pop()!;
+        }
+      } else if (fn === pdfjsLib.OPS.transform) {
+        currentCtm = multiplyMatrix(currentCtm, args);
+      } else if (fn === pdfjsLib.OPS.paintImageXObject || fn === pdfjsLib.OPS.paintInlineImageXObject) {
+        const imgName = args[0];
+        let imgObj: any = null;
+
+        try {
+          if (page.objs.has(imgName)) {
+            imgObj = page.objs.get(imgName);
+          } else if (page.commonObjs.has(imgName)) {
+            imgObj = page.commonObjs.get(imgName);
+          }
+        } catch (e) {}
+
+        if (imgObj && imgObj.width && imgObj.height && imgObj.data) {
+          const imgWidth = Math.abs(currentCtm[0]) || imgObj.width;
+          const imgHeight = Math.abs(currentCtm[3]) || imgObj.height;
+          const x = currentCtm[4];
+          const y = currentCtm[5];
+
+          // Ignore tiny noise (< 15x15)
+          if (imgWidth >= 15 && imgHeight >= 15) {
+            const canvas = document.createElement('canvas');
+            canvas.width = imgObj.width;
+            canvas.height = imgObj.height;
+            const ctx = canvas.getContext('2d');
+
+            if (ctx) {
+              const imageData = ctx.createImageData(imgObj.width, imgObj.height);
+              const data = imgObj.data;
+
+              if (data.length === imgObj.width * imgObj.height * 4) {
+                imageData.data.set(data);
+              } else if (data.length === imgObj.width * imgObj.height * 3) {
+                let j = 0;
+                for (let k = 0; k < data.length; k += 3) {
+                  imageData.data[j++] = data[k];
+                  imageData.data[j++] = data[k + 1];
+                  imageData.data[j++] = data[k + 2];
+                  imageData.data[j++] = 255;
+                }
+              }
+
+              ctx.putImageData(imageData, 0, 0);
+
+              const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/png'));
+              if (blob) {
+                const arrayBuffer = await blob.arrayBuffer();
+                extracted.push({
+                  x: Math.max(0, x),
+                  y: Math.max(0, y),
+                  width: Math.min(viewport.width, imgWidth),
+                  height: Math.min(viewport.height, imgHeight),
+                  imageBytes: new Uint8Array(arrayBuffer),
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Image extraction helper warning:', err);
+  }
+  return extracted;
+}
+
 export async function processPdfFile(
   file: File,
   options: TranslationOptions,
@@ -132,81 +247,42 @@ export async function processPdfFile(
 
     const pdfDoc = await PDFDocument.create();
 
-    // Load input PDF with ignoreEncryption: true to support protected/encrypted PDF files cleanly
-    let embeddedPages: any[] = [];
-    try {
-      const srcPdfDoc = await PDFDocument.load(arrayBuffer.slice(0), { ignoreEncryption: true });
-      embeddedPages = await pdfDoc.embedPdf(srcPdfDoc);
-    } catch (_err) {
-      // Non-fatal: If pdf-lib cannot embed vectors due to non-standard indirect PDF objects,
-      // the processor seamlessly falls back to pdf.js text rendering & canvas background.
-    }
 
-  const sections: DocumentSection[] = [];
-  let totalWords = 0;
-  let ocrImageCount = 0;
 
-  const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const sections: DocumentSection[] = [];
+    let totalWords = 0;
+    let ocrImageCount = 0;
 
-  for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-    const pageStartPct = Math.round(15 + ((pageNum - 1) / totalPages) * 75);
-    const pageEndPct = Math.round(15 + (pageNum / totalPages) * 75);
+    const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-    if (onProgress) onProgress(pageStartPct, `Traduction et mise en page intelligente PDF (Page ${pageNum}/${totalPages})...`);
+    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+      const pageStartPct = Math.round(15 + ((pageNum - 1) / totalPages) * 75);
+      const pageEndPct = Math.round(15 + (pageNum / totalPages) * 75);
 
-    const page = await pdfjsDoc.getPage(pageNum);
-    const viewport = page.getViewport({ scale: 1.0 });
+      if (onProgress) onProgress(pageStartPct, `Traduction et mise en page intelligente PDF (Page ${pageNum}/${totalPages})...`);
 
-    const initialPage = pdfDoc.addPage([viewport.width, viewport.height]);
-    let currentPage = initialPage;
+      const page = await pdfjsDoc.getPage(pageNum);
+      const viewport = page.getViewport({ scale: 1.0 });
 
-    // Draw background original page (images, borders, graphics)
-    let backgroundDrawn = false;
+      const initialPage = pdfDoc.addPage([viewport.width, viewport.height]);
+      let currentPage = initialPage;
 
-    if (embeddedPages && embeddedPages[pageNum - 1]) {
-      try {
-        initialPage.drawPage(embeddedPages[pageNum - 1], {
-          x: 0,
-          y: 0,
-          width: viewport.width,
-          height: viewport.height,
-        });
-        backgroundDrawn = true;
-      } catch (e) {
-        console.warn('Could not draw embedded page vector background:', e);
-      }
-    }
-
-    // High-Fidelity Fallback for images & artwork if vector embedding is unavailable
-    if (!backgroundDrawn) {
-      try {
-        const renderScale = 1.5; // High resolution for crisp images & graphics
-        const bgCanvas = document.createElement('canvas');
-        const bgCtx = bgCanvas.getContext('2d');
-        const bgViewport = page.getViewport({ scale: renderScale });
-        bgCanvas.width = bgViewport.width;
-        bgCanvas.height = bgViewport.height;
-
-        const bgRenderTask = (page as any).render({ canvasContext: bgCtx, viewport: bgViewport, canvas: bgCanvas } as any);
-        await bgRenderTask.promise;
-
-        const imageBlob = await new Promise<Blob | null>(resolve => bgCanvas.toBlob(resolve, 'image/jpeg', 0.88));
-        if (imageBlob) {
-          const imageBuffer = await imageBlob.arrayBuffer();
-          const embeddedJpg = await pdfDoc.embedJpg(imageBuffer);
-          initialPage.drawImage(embeddedJpg, {
-            x: 0,
-            y: 0,
-            width: viewport.width,
-            height: viewport.height,
+      // Extract and restore ONLY actual images/illustrations without copying old English text or emojis
+      const pageImages = await extractImagesFromPdfPage(page, viewport);
+      for (const img of pageImages) {
+        try {
+          const embeddedPng = await pdfDoc.embedPng(img.imageBytes);
+          initialPage.drawImage(embeddedPng, {
+            x: img.x,
+            y: img.y,
+            width: img.width,
+            height: img.height,
           });
-          backgroundDrawn = true;
+        } catch (e) {
+          console.warn('Could not draw extracted image:', e);
         }
-      } catch (err) {
-        console.warn('Canvas background rendering fallback warning:', err);
       }
-    }
 
     const textContent = await page.getTextContent();
     const textItems = textContent.items as any[];
