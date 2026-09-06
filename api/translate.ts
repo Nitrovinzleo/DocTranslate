@@ -37,7 +37,22 @@ export default async function handler(req: Request) {
 
         const cleanText = text.trim();
 
-        // Provider 1: Lingva API
+        // Provider 1: Google GTX Unofficial API (High Reliability & Speed)
+        try {
+          const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(cleanText)}`;
+          const gtxRes = await fetch(gtxUrl, { signal: AbortSignal.timeout(4000) });
+          if (gtxRes.ok) {
+            const data = await gtxRes.json();
+            if (Array.isArray(data) && Array.isArray(data[0])) {
+              const transStr = data[0].map((item: any) => item[0]).join('');
+              if (transStr && transStr.trim()) return transStr;
+            }
+          }
+        } catch (e) {
+          // fallback
+        }
+
+        // Provider 2: Lingva API
         try {
           const lingvaUrl = `https://lingva.ml/api/v1/${sourceLang}/${targetLang}/${encodeURIComponent(cleanText)}`;
           const lingvaRes = await fetch(lingvaUrl, { signal: AbortSignal.timeout(3500) });
@@ -49,7 +64,7 @@ export default async function handler(req: Request) {
           // fallback
         }
 
-        // Provider 2: MyMemory API
+        // Provider 3: MyMemory API
         try {
           const langPair = `${sourceLang}|${targetLang}`;
           const myMemUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanText)}&langpair=${langPair}`;

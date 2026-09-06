@@ -34,6 +34,21 @@ function localTranslatePlugin() {
                 }
                 const cleanText = text.trim();
 
+                // Google GTX Provider (Primary)
+                try {
+                  const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(cleanText)}`;
+                  const gtxRes = await fetch(gtxUrl, { signal: AbortSignal.timeout(4000) });
+                  if (gtxRes.ok) {
+                    const data: any = await gtxRes.json();
+                    if (Array.isArray(data) && Array.isArray(data[0])) {
+                      const transStr = data[0].map((item: any) => item[0]).join('');
+                      if (transStr && transStr.trim()) return transStr;
+                    }
+                  }
+                } catch (e) {
+                  // fallback
+                }
+
                 // Lingva Provider
                 try {
                   const lingvaUrl = `https://lingva.ml/api/v1/${sourceLang}/${targetLang}/${encodeURIComponent(cleanText)}`;

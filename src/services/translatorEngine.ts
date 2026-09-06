@@ -29,13 +29,6 @@ export interface TranslationOptions {
   onProgress?: (percent: number, message: string) => void;
 }
 
-const PROTECTED_PROPER_NOUNS = [
-  'Gaumont', 'Lisa Kohn', 'Virginy L. Sam', 'Journal dune Peste', "Journal d'une Peste",
-  'Fanny', 'Sonia', 'John', 'Eva', 'Pépé', 'Linda', 'Charley', 'Marilyn', 'Theo',
-  'Madame Turant', 'Semi-Colon', 'Perfect Family', 'Tooth Fairy', 'BRAT Revolution',
-  'BRAT Support Group', 'BRAT Rule', 'BRAT Rules', 'BRATs', 'BRAT'
-];
-
 const translationCache: Record<string, string> = {};
 const translationPipelines: Record<string, any> = {};
 const loadingPromises: Record<string, Promise<any>> = {};
@@ -47,30 +40,28 @@ function normalizeQuotes(text: string): string {
     .replace(/[\u201C\u201D«»"]/g, '"');
 }
 
-function protectProperNouns(text: string): { protectedText: string; map: Record<string, string> } {
-  let protectedText = text;
-  const map: Record<string, string> = {};
-  let counter = 0;
+function applyDomainPostProcessing(text: string, src: string, tgt: string): string {
+  if (!text || src !== 'en' || tgt !== 'fr') return text;
 
-  for (const name of PROTECTED_PROPER_NOUNS) {
-    const regex = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
-    if (regex.test(protectedText)) {
-      const token = `__XPN${counter}X__`;
-      map[token] = name;
-      protectedText = protectedText.replace(regex, token);
-      counter++;
-    }
-  }
+  let result = text;
+  result = result.replace(/\bDIARY OF A BRAT\b/gi, "JOURNAL D'UNE PESTE");
+  result = result.replace(/\bBRAT Revolution\b/gi, "Révolution PESTE");
+  result = result.replace(/\bBRAT Support Group\b/gi, "Groupe de Soutien PESTE");
+  result = result.replace(/\bBRAT Rule\b/gi, "Règle PESTE");
+  result = result.replace(/\bBRAT Rules\b/gi, "Règles PESTE");
+  result = result.replace(/\bBRAT tactic\b/gi, "tactique PESTE");
+  result = result.replace(/\bBRAT tactics\b/gi, "tactiques PESTE");
+  result = result.replace(/\bBRAT spirit\b/gi, "esprit PESTE");
+  result = result.replace(/\banti-BRAT\b/gi, "anti-PESTE");
+  result = result.replace(/\ba BRAT\b/gi, "une PESTE");
+  result = result.replace(/\bBRATs\b/gi, "PESTES");
+  result = result.replace(/\bBRAT\b/g, "PESTE");
 
-  return { protectedText, map };
+  return result;
 }
 
-function restoreProperNouns(text: string, map: Record<string, string>): string {
-  let restored = text;
-  for (const [token, originalName] of Object.entries(map)) {
-    restored = restored.replaceAll(token, originalName);
-  }
-  return restored;
+function protectProperNouns(text: string): { protectedText: string; map: Record<string, string> } {
+  return { protectedText: text, map: {} };
 }
 
 // Full sentence & idiom patterns (EN -> FR)
@@ -300,9 +291,9 @@ export async function translateTextBatch(
             if (rawTrans === protectedChunk[k].protectedText) {
               rawTrans = fastRuleTranslate(protectedChunk[k].protectedText, sourceLang, targetLang);
             }
-            const restored = restoreProperNouns(rawTrans, protectedChunk[k].map);
-            results[chunkIndices[k]] = restored;
-            translationCache[`serverless-ai:${sourceLang}:${targetLang}:${chunkTexts[k]}`] = restored;
+            const processed = applyDomainPostProcessing(rawTrans, sourceLang, targetLang);
+            results[chunkIndices[k]] = processed;
+            translationCache[`serverless-ai:${sourceLang}:${targetLang}:${chunkTexts[k]}`] = processed;
           }
           continue;
         }
@@ -327,9 +318,9 @@ export async function translateTextBatch(
               rawTrans = fastRuleTranslate(protectedChunk[k].protectedText, sourceLang, targetLang);
             }
 
-            const restored = restoreProperNouns(rawTrans, protectedChunk[k].map);
-            results[chunkIndices[k]] = restored;
-            translationCache[`browser-ai:${sourceLang}:${targetLang}:${chunkTexts[k]}`] = restored;
+            const processed = applyDomainPostProcessing(rawTrans, sourceLang, targetLang);
+            results[chunkIndices[k]] = processed;
+            translationCache[`browser-ai:${sourceLang}:${targetLang}:${chunkTexts[k]}`] = processed;
           }
           continue;
         }
@@ -355,9 +346,9 @@ export async function translateTextBatch(
           if (res.ok) {
             const data = await res.json();
             if (data.response) {
-              const restored = restoreProperNouns(data.response.trim(), protectedChunk[k].map);
-              results[chunkIndices[k]] = restored;
-              translationCache[`local-ollama:${sourceLang}:${targetLang}:${chunkTexts[k]}`] = restored;
+              const processed = applyDomainPostProcessing(data.response.trim(), sourceLang, targetLang);
+              results[chunkIndices[k]] = processed;
+              translationCache[`local-ollama:${sourceLang}:${targetLang}:${chunkTexts[k]}`] = processed;
               continue;
             }
           }
@@ -365,8 +356,8 @@ export async function translateTextBatch(
           // fallback
         }
         const fallbackTrans = fastRuleTranslate(protectedChunk[k].protectedText, sourceLang, targetLang);
-        const restored = restoreProperNouns(fallbackTrans, protectedChunk[k].map);
-        results[chunkIndices[k]] = restored;
+        const processed = applyDomainPostProcessing(fallbackTrans, sourceLang, targetLang);
+        results[chunkIndices[k]] = processed;
       }
       continue;
     }
@@ -376,37 +367,39 @@ export async function translateTextBatch(
       if (onProgress) onProgress(currentProgress, `Mode Rapide / Dictionnaire (Lot ${chunkIdx + 1}/${numChunks})...`);
       for (let k = 0; k < chunkTexts.length; k++) {
         const rawTrans = fastRuleTranslate(protectedChunk[k].protectedText, sourceLang, targetLang);
-        const restored = restoreProperNouns(rawTrans, protectedChunk[k].map);
-        results[chunkIndices[k]] = restored;
-        translationCache[`fast-rule:${sourceLang}:${targetLang}:${chunkTexts[k]}`] = restored;
+        const processed = applyDomainPostProcessing(rawTrans, sourceLang, targetLang);
+        results[chunkIndices[k]] = processed;
+        translationCache[`fast-rule:${sourceLang}:${targetLang}:${chunkTexts[k]}`] = processed;
       }
       continue;
     }
 
-    // Default Fallback Loop
+    // Default High-Reliability Fallback Loop (Google GTX Direct Fetch)
     for (let k = 0; k < chunkTexts.length; k++) {
       const indexInResults = chunkIndices[k];
-      const { protectedText, map } = protectedChunk[k];
+      const rawText = chunkTexts[k];
 
-      let trans = protectedText;
+      let trans = rawText;
       try {
-        const lingvaUrl = `https://lingva.ml/api/v1/${sourceLang}/${targetLang}/${encodeURIComponent(protectedText)}`;
-        const r = await fetch(lingvaUrl, { signal: AbortSignal.timeout(3000) });
+        const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(rawText)}`;
+        const r = await fetch(gtxUrl, { signal: AbortSignal.timeout(4000) });
         if (r.ok) {
           const data = await r.json();
-          if (data.translation) trans = data.translation;
+          if (Array.isArray(data) && Array.isArray(data[0])) {
+            trans = data[0].map((item: any) => item[0]).join('');
+          }
         }
       } catch (err) {
         // fallback
       }
 
-      if (trans === protectedText) {
-        trans = fastRuleTranslate(protectedText, sourceLang, targetLang);
+      if (!trans || trans === rawText) {
+        trans = fastRuleTranslate(rawText, sourceLang, targetLang);
       }
 
-      const restored = restoreProperNouns(trans, map);
-      results[indexInResults] = restored;
-      translationCache[`${sourceLang}:${targetLang}:${chunkTexts[k]}`] = restored;
+      const processed = applyDomainPostProcessing(trans, sourceLang, targetLang);
+      results[indexInResults] = processed;
+      translationCache[`${sourceLang}:${targetLang}:${rawText}`] = processed;
     }
   }
 
