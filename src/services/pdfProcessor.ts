@@ -165,14 +165,13 @@ export async function processPdfFile(
       const renderTask = (page as any).render({ canvasContext: ctx, viewport, canvas } as any);
       await renderTask.promise;
 
-      const ocrResult = await performLocalOCR(canvas, options.sourceLang, {
-        onProgress: (subPct, msg) => {
-          const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
-          if (onProgress) onProgress(scaled, msg);
-        }
+      const ocrResult = await performLocalOCR(canvas, options.sourceLang, (subPct: number, msg: string) => {
+        const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
+        if (onProgress) onProgress(scaled, msg);
       });
 
-      const rawOcrTexts = ocrResult.lines.map(l => l.text.trim()).filter(Boolean);
+      const ocrLines = ocrResult.lines || [];
+      const rawOcrTexts = ocrLines.map(l => l.text.trim()).filter(Boolean);
       const translatedOcrBatch = await translateTextBatch(rawOcrTexts, {
         ...options,
         onProgress: (subPct, msg) => {
@@ -181,8 +180,8 @@ export async function processPdfFile(
         }
       });
 
-      for (let idx = 0; idx < ocrResult.lines.length; idx++) {
-        const line = ocrResult.lines[idx];
+      for (let idx = 0; idx < ocrLines.length; idx++) {
+        const line = ocrLines[idx];
         const originalText = line.text.trim();
         if (!originalText) continue;
 
