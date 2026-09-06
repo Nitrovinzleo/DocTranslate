@@ -217,8 +217,8 @@ export async function processPdfFile(
 
         const isFooterBrand = y <= 45 || y >= viewport.height - 35 || /^gaumont$/i.test(str) || /^\d{1,3}$/.test(str);
 
-        // Group items within 7px vertical Y distance
-        let group = lineGroups.find(g => Math.abs(g.y - y) <= 7);
+        // Group items within 2.5px vertical Y distance (exact same horizontal line)
+        let group = lineGroups.find(g => Math.abs(g.y - y) <= 2.5);
         if (!group) {
           group = {
             y,
@@ -279,30 +279,36 @@ export async function processPdfFile(
         if (!cleanTextForPdf) continue;
 
         // Footer watermarks ("Gaumont", page numbers) remain small and discrete
-        let fontSize = Math.max(8, Math.min(20, group.maxFontSize));
+        let fontSize = Math.max(8, Math.min(22, group.maxFontSize));
         if (group.isFooterBrand) {
           fontSize = Math.min(10, fontSize);
         }
 
-        const activeFont = (group.isHeading && !group.isFooterBrand) ? fontBold : fontRegular;
+        const isLargeHeading = group.isHeading && !group.isFooterBrand;
+        const activeFont = isLargeHeading ? fontBold : fontRegular;
         const fontColor = group.isFooterBrand 
           ? rgb(0.45, 0.45, 0.5) 
-          : (group.isHeading ? rgb(0.05, 0.05, 0.15) : rgb(0.12, 0.12, 0.25));
+          : (isLargeHeading ? rgb(0.05, 0.05, 0.15) : rgb(0.12, 0.12, 0.25));
 
         const maxW = Math.max(40, viewport.width - group.minX - 20);
         const wrappedLines = wrapTextToLines(cleanTextForPdf, fontSize, maxW);
 
+        // Generous line height & spacing gap (extra gap for large titles)
+        const fontLineHeight = isLargeHeading ? fontSize * 1.55 : fontSize * 1.35;
+        const minGapAbove = isLargeHeading ? 14 : 4;
+        const minGapBelow = isLargeHeading ? 14 : 4;
+
         // Determine target Y position with collision prevention
         let lineY = group.y;
         if (!group.isFooterBrand) {
-          lineY = Math.min(group.y, currentYCursor - (group.isHeading ? 6 : 2));
+          lineY = Math.min(group.y, currentYCursor - minGapAbove);
         }
 
         // Mask original English text with white rectangle
         const isSparseGraphicPage = pageNum === 1 || lineGroups.length <= 5;
         if (!isSparseGraphicPage && !group.isFooterBrand) {
-          const maskHeight = Math.max(fontSize * 1.15 * wrappedLines.length, 12);
-          const maskY = Math.max(0, lineY - (wrappedLines.length - 1) * fontSize * 1.15 - 1);
+          const maskHeight = Math.max(fontLineHeight * wrappedLines.length, 12);
+          const maskY = Math.max(0, lineY - (wrappedLines.length - 1) * fontLineHeight - 1);
           const maskWidth = Math.min(viewport.width - group.minX, Math.max(group.maxX - group.minX + 4, 30));
 
           try {
@@ -320,7 +326,7 @@ export async function processPdfFile(
 
         // Render lines
         for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
-          const targetY = lineY - (lIdx * fontSize * 1.15);
+          const targetY = lineY - (lIdx * fontLineHeight);
           try {
             newPage.drawText(wrappedLines[lIdx], {
               x: Math.max(5, Math.min(viewport.width - 40, group.minX)),
@@ -335,7 +341,7 @@ export async function processPdfFile(
         }
 
         if (!group.isFooterBrand) {
-          currentYCursor = lineY - (fontSize * 1.15 * wrappedLines.length) - (group.isHeading ? 6 : 2);
+          currentYCursor = lineY - (wrappedLines.length * fontLineHeight) - minGapBelow;
         }
       }
     }
