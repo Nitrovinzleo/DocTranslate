@@ -47,6 +47,27 @@ function wrapTextToLines(text: string, fontSize: number, maxPixelWidth: number):
   return lines;
 }
 
+function isWatermarkItem(item: any): boolean {
+  if (!item || !item.str) return true;
+  const str = item.str.trim();
+  if (!str) return true;
+
+  // 1. Watermark keywords
+  const watermarkRegex = /^(gaumont|watermark|draft|brouillon|confidentiel|confidential|do not copy|specimen|sample|copie|privé|private)$/i;
+  if (watermarkRegex.test(str)) return true;
+
+  // 2. Rotated / Skewed text detection (diagonal watermark in PDF transform matrix)
+  if (item.transform && Array.isArray(item.transform)) {
+    const skewY = Math.abs(item.transform[1] || 0);
+    const skewX = Math.abs(item.transform[2] || 0);
+    if (skewY > 0.05 || skewX > 0.05) {
+      return true; // Rotated diagonal watermark
+    }
+  }
+
+  return false;
+}
+
 export async function processPdfFile(
   file: File,
   options: TranslationOptions,
@@ -182,8 +203,8 @@ export async function processPdfFile(
         }
       }
     } else {
-      // Vector PDF text items: Group items into horizontal lines (by Y coordinate)
-      const validItems = textItems.filter(item => item.str && item.str.trim().length > 0);
+      // Vector PDF text items: Group items into horizontal lines (excluding watermarks)
+      const validItems = textItems.filter(item => item.str && item.str.trim().length > 0 && !isWatermarkItem(item));
 
       interface LineItem {
         str: string;
