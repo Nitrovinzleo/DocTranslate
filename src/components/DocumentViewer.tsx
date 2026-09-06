@@ -48,20 +48,20 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
   return (
     <div className="w-full space-y-6 animate-fadeIn">
       
-      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6">
+      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 overflow-hidden">
         
-        <div>
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="px-3 py-1 rounded-full bg-emerald-950/80 border border-emerald-800 text-xs font-semibold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5" /> Traduction Prête (Confidentielle)
             </span>
           </div>
 
-          <h2 className="text-xl font-extrabold text-white mt-2 truncate max-w-xl">
+          <h2 className="text-lg sm:text-xl font-extrabold text-white mt-2 truncate max-w-full lg:max-w-xl">
             {result.fileName}
           </h2>
 
-          <div className="flex items-center gap-4 text-xs text-slate-400 mt-1 font-medium">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs text-slate-400 mt-1 font-medium">
             <span>Mots traités : <strong className="text-slate-200">{result.stats.totalWords}</strong></span>
             <span>•</span>
             <span>Segments : <strong className="text-slate-200">{sections.length}</strong></span>
@@ -77,10 +77,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
           </div>
         </div>
 
-        <div className="flex items-center gap-3 w-full md:w-auto">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto shrink-0">
           <button
             onClick={onReset}
-            className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all shrink-0 whitespace-nowrap"
           >
             <RefreshCw className="w-4 h-4" />
             <span>Nouveau document</span>
@@ -88,9 +88,9 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
 
           <button
             onClick={handleDownload}
-            className="flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white text-sm font-extrabold shadow-lg shadow-emerald-500/25 transition-all hover:scale-105"
+            className="w-full sm:w-auto flex items-center justify-center gap-2.5 px-5 sm:px-6 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white text-xs sm:text-sm font-extrabold shadow-lg shadow-emerald-500/25 transition-all hover:scale-[1.02] active:scale-[0.98] shrink-0 whitespace-nowrap"
           >
-            <Download className="w-5 h-5" />
+            <Download className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
             <span>Télécharger le document traduit</span>
           </button>
         </div>
