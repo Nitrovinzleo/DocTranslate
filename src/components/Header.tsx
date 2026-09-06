@@ -19,17 +19,23 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Brand Logo & Avatar */}
         <div className="flex items-center gap-3.5">
-          <div className="relative flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-600 to-cyan-500 p-0.5 shadow-lg shadow-indigo-500/25 group">
+          <a
+            href="https://github.com/Nitrovinzleo"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Voir le profil GitHub Nitrovinzleo"
+            className="relative flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-600 to-cyan-500 p-0.5 shadow-lg shadow-indigo-500/25 group transition-transform hover:scale-105"
+          >
             <img
               src="https://github.com/Nitrovinzleo.png"
               alt="Nitrovinzleo Avatar Logo"
-              className="w-full h-full object-cover rounded-[14px] border border-slate-900 group-hover:scale-105 transition-transform"
+              className="w-full h-full object-cover rounded-[14px] border border-slate-900"
               onError={(e) => {
                 // Fallback icon if image fails
                 (e.target as HTMLElement).style.display = 'none';
               }}
             />
-          </div>
+          </a>
 
           <div>
             <div className="flex items-center gap-2">
