@@ -47,44 +47,57 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Engine Switcher & Privacy Status */}
         <div className="flex items-center gap-3 flex-wrap justify-center">
           
-          <div className="flex items-center bg-slate-950/90 border border-slate-800 rounded-xl p-1 shadow-inner">
+          <div className="flex items-center bg-slate-950/90 border border-slate-800 rounded-xl p-1 shadow-inner flex-wrap">
+            <button
+              onClick={() => setEngineMode('serverless-ai')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                engineMode === 'serverless-ai'
+                  ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-md shadow-cyan-500/25'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Traduction ultra-rapide par lots via API confidentielle Vercel (0 stockage, 0 log)"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-cyan-300" />
+              <span>Serveur Confidentiel</span>
+            </button>
+
             <button
               onClick={() => setEngineMode('browser-ai')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 engineMode === 'browser-ai'
                   ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-500/25'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
-              title="Exécute un modèle IA directement dans votre navigateur"
+              title="Exécute un modèle IA (WASM) 100% dans votre navigateur sans serveur"
             >
-              <Cpu className="w-3.5 h-3.5" />
-              <span>IA Locale</span>
-            </button>
-
-            <button
-              onClick={() => setEngineMode('fast-rule')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                engineMode === 'fast-rule'
-                  ? 'bg-gradient-to-r from-cyan-600 to-teal-600 text-white shadow-md shadow-cyan-500/25'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title="Traduction instantanée basée sur dictionnaire local"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Mode Rapide</span>
+              <Cpu className="w-3.5 h-3.5 text-purple-300" />
+              <span>IA Locale (Navigateur)</span>
             </button>
 
             <button
               onClick={() => setEngineMode('local-ollama')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 engineMode === 'local-ollama'
                   ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-500/25'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
-              title="Connecteur vers un serveur Ollama local (localhost:11434)"
+              title="Connecteur vers un serveur Ollama local sur votre PC (localhost:11434)"
             >
-              <HardDriveDownload className="w-3.5 h-3.5" />
+              <HardDriveDownload className="w-3.5 h-3.5 text-emerald-300" />
               <span>Ollama Local</span>
+            </button>
+
+            <button
+              onClick={() => setEngineMode('fast-rule')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                engineMode === 'fast-rule'
+                  ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-md shadow-amber-500/25'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Traduction instantanée basée sur dictionnaire et règles locales"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>Mode Rapide</span>
             </button>
           </div>
 

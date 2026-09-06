@@ -16,7 +16,7 @@ export function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [sourceLang, setSourceLang] = useState<string>('en');
   const [targetLang, setTargetLang] = useState<string>('fr');
-  const [engineMode, setEngineMode] = useState<TranslationEngineMode>('browser-ai');
+  const [engineMode, setEngineMode] = useState<TranslationEngineMode>('serverless-ai');
 
   const [isTranslating, setIsTranslating] = useState<boolean>(false);
   const [progressPct, setProgressPct] = useState<number>(0);

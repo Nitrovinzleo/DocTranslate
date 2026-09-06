@@ -19,7 +19,7 @@ export const SUPPORTED_LANGUAGES: LanguageOption[] = [
   { code: 'pl', name: 'Polski', flag: '🇵🇱' },
 ];
 
-export type TranslationEngineMode = 'browser-ai' | 'fast-rule' | 'local-ollama';
+export type TranslationEngineMode = 'serverless-ai' | 'browser-ai' | 'local-ollama' | 'fast-rule';
 
 export interface TranslationOptions {
   sourceLang: string;
@@ -37,6 +37,8 @@ const PROTECTED_PROPER_NOUNS = [
 ];
 
 const translationCache: Record<string, string> = {};
+const translationPipelines: Record<string, any> = {};
+const loadingPromises: Record<string, Promise<any>> = {};
 
 function normalizeQuotes(text: string): string {
   if (!text) return '';
@@ -194,11 +196,46 @@ function fastRuleTranslate(text: string, src: string, tgt: string): string {
   return translatedTokens.join('');
 }
 
+async function getBrowserWasmPipeline(src: string, tgt: string, onProgress?: (percent: number, msg: string) => void) {
+  const key = `${src}-${tgt}`;
+  if (translationPipelines[key]) return translationPipelines[key];
+  if (key in loadingPromises) return loadingPromises[key];
+
+  const modelName = `Xenova/opus-mt-${src}-${tgt}`;
+
+  loadingPromises[key] = (async () => {
+    try {
+      if (onProgress) onProgress(15, `Chargement modèle WASM Navigateur (${src} -> ${tgt})...`);
+      const { pipeline, env } = await import('@xenova/transformers');
+      env.allowLocalModels = false;
+      env.allowRemoteModels = true;
+
+      const pipe = await pipeline('translation', modelName, {
+        progress_callback: (info: any) => {
+          if (info.status === 'progress' && onProgress) {
+            const pct = Math.round((info.loaded / (info.total || 1)) * 100);
+            onProgress(Math.min(90, Math.max(15, pct)), `Téléchargement modèle WASM (${pct}%)...`);
+          }
+        }
+      });
+      translationPipelines[key] = pipe;
+      return pipe;
+    } catch (e) {
+      console.warn('WASM model loading error:', e);
+      return null;
+    } finally {
+      delete loadingPromises[key];
+    }
+  })();
+
+  return loadingPromises[key];
+}
+
 export async function translateTextBatch(
   texts: string[],
   options: TranslationOptions
 ): Promise<string[]> {
-  const { sourceLang, targetLang, onProgress } = options;
+  const { sourceLang, targetLang, engineMode = 'serverless-ai', ollamaUrl = 'http://localhost:11434', onProgress } = options;
   const total = texts.length;
   if (total === 0) return [];
 
@@ -213,7 +250,7 @@ export async function translateTextBatch(
       continue;
     }
 
-    const cacheKey = `${sourceLang}:${targetLang}:${raw}`;
+    const cacheKey = `${engineMode}:${sourceLang}:${targetLang}:${raw}`;
     if (translationCache[cacheKey]) {
       results[i] = translationCache[cacheKey];
     } else {
@@ -232,10 +269,6 @@ export async function translateTextBatch(
 
   for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
     const currentProgress = Math.round(20 + ((chunkIdx + 1) / numChunks) * 75);
-    if (onProgress) {
-      onProgress(currentProgress, `Traduction en cours (Lot ${chunkIdx + 1}/${numChunks})...`);
-    }
-
     const start = chunkIdx * CHUNK_SIZE;
     const end = Math.min(uncachedTexts.length, start + CHUNK_SIZE);
     const chunkTexts = uncachedTexts.slice(start, end);
@@ -243,42 +276,114 @@ export async function translateTextBatch(
 
     const protectedChunk = chunkTexts.map(t => protectProperNouns(normalizeQuotes(t)));
 
-    try {
-      const res = await fetch('/api/translate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          texts: protectedChunk.map(p => p.protectedText),
-          sourceLang,
-          targetLang,
-        }),
-        signal: AbortSignal.timeout(6000)
-      });
+    // Mode 1: Serveur Confidentiel Vercel / Fast API (Serverless)
+    if (engineMode === 'serverless-ai') {
+      if (onProgress) onProgress(currentProgress, `Serveur Confidentiel (Lot ${chunkIdx + 1}/${numChunks})...`);
+      try {
+        const res = await fetch('/api/translate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            texts: protectedChunk.map(p => p.protectedText),
+            sourceLang,
+            targetLang,
+          }),
+          signal: AbortSignal.timeout(6000)
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        const translatedArray: string[] = data.translatedTexts || [data.translatedText];
+        if (res.ok) {
+          const data = await res.json();
+          const translatedArray: string[] = data.translatedTexts || [data.translatedText];
 
-        for (let k = 0; k < chunkTexts.length; k++) {
-          const originalRaw = chunkTexts[k];
-          let rawTrans = translatedArray[k] || chunkTexts[k];
-
-          // If provider returned unchanged text, apply robust fastRuleTranslate fallback
-          if (rawTrans === protectedChunk[k].protectedText) {
-            rawTrans = fastRuleTranslate(protectedChunk[k].protectedText, sourceLang, targetLang);
+          for (let k = 0; k < chunkTexts.length; k++) {
+            let rawTrans = translatedArray[k] || chunkTexts[k];
+            if (rawTrans === protectedChunk[k].protectedText) {
+              rawTrans = fastRuleTranslate(protectedChunk[k].protectedText, sourceLang, targetLang);
+            }
+            const restored = restoreProperNouns(rawTrans, protectedChunk[k].map);
+            results[chunkIndices[k]] = restored;
+            translationCache[`serverless-ai:${sourceLang}:${targetLang}:${chunkTexts[k]}`] = restored;
           }
-
-          const restored = restoreProperNouns(rawTrans, protectedChunk[k].map);
-          results[chunkIndices[k]] = restored;
-          translationCache[`${sourceLang}:${targetLang}:${originalRaw}`] = restored;
+          continue;
         }
-        continue;
+      } catch (e) {
+        console.warn('Serverless API fallback:', e);
       }
-    } catch (e) {
-      console.warn('Batch translation call fallback:', e);
     }
 
-    // Direct fallback loop if API call fails
+    // Mode 2: IA Locale WASM (Transformers.js in Browser)
+    if (engineMode === 'browser-ai') {
+      if (onProgress) onProgress(currentProgress, `IA Locale WASM Navigateur (Lot ${chunkIdx + 1}/${numChunks})...`);
+      try {
+        const pipe = await getBrowserWasmPipeline(sourceLang, targetLang, onProgress);
+        if (pipe) {
+          for (let k = 0; k < chunkTexts.length; k++) {
+            const output = await pipe(protectedChunk[k].protectedText);
+            let rawTrans = '';
+            if (Array.isArray(output) && output[0]) rawTrans = output[0].translation_text || output[0];
+            else if (typeof output === 'string') rawTrans = output;
+            
+            if (!rawTrans || rawTrans === protectedChunk[k].protectedText) {
+              rawTrans = fastRuleTranslate(protectedChunk[k].protectedText, sourceLang, targetLang);
+            }
+
+            const restored = restoreProperNouns(rawTrans, protectedChunk[k].map);
+            results[chunkIndices[k]] = restored;
+            translationCache[`browser-ai:${sourceLang}:${targetLang}:${chunkTexts[k]}`] = restored;
+          }
+          continue;
+        }
+      } catch (e) {
+        console.warn('Browser WASM pipeline error:', e);
+      }
+    }
+
+    // Mode 3: Ollama Local (PC - localhost:11434)
+    if (engineMode === 'local-ollama') {
+      if (onProgress) onProgress(currentProgress, `Ollama Local PC (Lot ${chunkIdx + 1}/${numChunks})...`);
+      for (let k = 0; k < chunkTexts.length; k++) {
+        try {
+          const res = await fetch(`${ollamaUrl}/api/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'llama3:latest',
+              prompt: `Translate from ${sourceLang} to ${targetLang}. Return ONLY the direct translation:\n\n${protectedChunk[k].protectedText}`,
+              stream: false
+            })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.response) {
+              const restored = restoreProperNouns(data.response.trim(), protectedChunk[k].map);
+              results[chunkIndices[k]] = restored;
+              translationCache[`local-ollama:${sourceLang}:${targetLang}:${chunkTexts[k]}`] = restored;
+              continue;
+            }
+          }
+        } catch (e) {
+          // fallback
+        }
+        const fallbackTrans = fastRuleTranslate(protectedChunk[k].protectedText, sourceLang, targetLang);
+        const restored = restoreProperNouns(fallbackTrans, protectedChunk[k].map);
+        results[chunkIndices[k]] = restored;
+      }
+      continue;
+    }
+
+    // Mode 4: Mode Rapide (Dictionnaire / Règles locales)
+    if (engineMode === 'fast-rule') {
+      if (onProgress) onProgress(currentProgress, `Mode Rapide / Dictionnaire (Lot ${chunkIdx + 1}/${numChunks})...`);
+      for (let k = 0; k < chunkTexts.length; k++) {
+        const rawTrans = fastRuleTranslate(protectedChunk[k].protectedText, sourceLang, targetLang);
+        const restored = restoreProperNouns(rawTrans, protectedChunk[k].map);
+        results[chunkIndices[k]] = restored;
+        translationCache[`fast-rule:${sourceLang}:${targetLang}:${chunkTexts[k]}`] = restored;
+      }
+      continue;
+    }
+
+    // Default Fallback Loop
     for (let k = 0; k < chunkTexts.length; k++) {
       const indexInResults = chunkIndices[k];
       const { protectedText, map } = protectedChunk[k];
