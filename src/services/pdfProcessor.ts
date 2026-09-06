@@ -268,20 +268,25 @@ export async function processPdfFile(
         const wrappedLines = wrapTextToLines(cleanTextForPdf, fontSize, maxW);
 
         // Erase background box (masking original English text)
-        const maskHeight = Math.max(fontSize * 1.35 * wrappedLines.length, 14);
-        const maskY = Math.max(0, group.y - (wrappedLines.length - 1) * fontSize * 1.2 - 2);
-        const maskWidth = Math.min(viewport.width - group.minX + 4, Math.max(group.maxX - group.minX + 16, 60));
+        // On Page 1 (Cover Page) or pages with sparse text (<= 6 lines), do NOT draw opaque white blocks over illustrations & artwork!
+        const isSparseGraphicPage = pageNum === 1 || lineGroups.length <= 6;
 
-        try {
-          newPage.drawRectangle({
-            x: Math.max(0, group.minX - 4),
-            y: maskY,
-            width: maskWidth,
-            height: maskHeight,
-            color: rgb(1, 1, 1), // White rectangle erases old English text underneath
-          });
-        } catch (e) {
-          console.warn('PDF erase background rectangle error:', e);
+        if (!isSparseGraphicPage) {
+          const maskHeight = Math.max(fontSize * 1.18 * wrappedLines.length, 12);
+          const maskY = Math.max(0, group.y - (wrappedLines.length - 1) * fontSize * 1.15 - 1);
+          const maskWidth = Math.min(viewport.width - group.minX, Math.max(group.maxX - group.minX + 4, 30));
+
+          try {
+            newPage.drawRectangle({
+              x: Math.max(0, group.minX - 2),
+              y: maskY,
+              width: maskWidth,
+              height: maskHeight,
+              color: rgb(1, 1, 1), // White rectangle erases old English text underneath
+            });
+          } catch (e) {
+            console.warn('PDF erase background rectangle error:', e);
+          }
         }
 
         // Draw translated lines
