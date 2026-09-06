@@ -161,59 +161,62 @@ export async function processPdfFile(
       const initialPage = pdfDoc.addPage([viewport.width, viewport.height]);
       let currentPage = initialPage;
 
-      // 1. Render complete page background to canvas (scale 1.8) to capture all vector artwork, images, graphics & shapes
-      const renderScale = 1.8;
-      const bgCanvas = document.createElement('canvas');
-      const bgCtx = bgCanvas.getContext('2d');
-      const bgViewport = page.getViewport({ scale: renderScale });
-      bgCanvas.width = bgViewport.width;
-      bgCanvas.height = bgViewport.height;
-
-      const bgRenderTask = (page as any).render({ canvasContext: bgCtx, viewport: bgViewport, canvas: bgCanvas } as any);
-      await bgRenderTask.promise;
-
-      // 2. Erase 100% of original English text & emojis from the canvas background image before embedding
       const textContent = await page.getTextContent();
       const textItems = textContent.items as any[];
 
-      if (bgCtx && textItems.length > 0) {
-        bgCtx.fillStyle = '#ffffff';
-        for (const item of textItems) {
-          if (!item.str || !item.str.trim()) continue;
-          const transform = item.transform;
-          const itemX = transform[4] * renderScale;
-          const itemY = (viewport.height - transform[5]) * renderScale;
-          const itemFontSize = (Math.abs(transform[0]) || Math.abs(transform[3]) || 12) * renderScale;
-          const itemWidth = (item.width || item.str.length * itemFontSize * 0.5) * renderScale;
+      // 1. Render background canvas to capture images & artwork unless ignoreImages is requested
+      if (!options.ignoreImages) {
+        const renderScale = 1.8;
+        const bgCanvas = document.createElement('canvas');
+        const bgCtx = bgCanvas.getContext('2d');
+        const bgViewport = page.getViewport({ scale: renderScale });
+        bgCanvas.width = bgViewport.width;
+        bgCanvas.height = bgViewport.height;
 
-          // Erase exact box of original text on canvas
-          bgCtx.fillRect(
-            Math.max(0, itemX - 4),
-            Math.max(0, itemY - itemFontSize - 3),
-            Math.min(bgCanvas.width - itemX + 4, itemWidth + 8),
-            itemFontSize * 1.45
-          );
-        }
-      }
+        const bgRenderTask = (page as any).render({ canvasContext: bgCtx, viewport: bgViewport, canvas: bgCanvas } as any);
+        await bgRenderTask.promise;
 
-      // 3. Embed cleaned background canvas onto initialPage (Images & Artwork kept 100%, Text erased)
-      try {
-        const imageBlob = await new Promise<Blob | null>(res => bgCanvas.toBlob(res, 'image/jpeg', 0.90));
-        if (imageBlob) {
-          const imageBuffer = await imageBlob.arrayBuffer();
-          const embeddedJpg = await pdfDoc.embedJpg(imageBuffer);
-          initialPage.drawImage(embeddedJpg, {
-            x: 0,
-            y: 0,
-            width: viewport.width,
-            height: viewport.height,
-          });
+        if (bgCtx && textItems.length > 0) {
+          bgCtx.fillStyle = '#ffffff';
+          for (const item of textItems) {
+            if (!item.str || !item.str.trim()) continue;
+            const transform = item.transform;
+            const itemX = transform[4] * renderScale;
+            const itemY = (viewport.height - transform[5]) * renderScale;
+            const itemFontSize = (Math.abs(transform[0]) || Math.abs(transform[3]) || 12) * renderScale;
+            const itemWidth = (item.width || item.str.length * itemFontSize * 0.5) * renderScale;
+
+            bgCtx.fillRect(
+              Math.max(0, itemX - 4),
+              Math.max(0, itemY - itemFontSize - 3),
+              Math.min(bgCanvas.width - itemX + 4, itemWidth + 8),
+              itemFontSize * 1.45
+            );
+          }
         }
-      } catch (err) {
-        console.warn('Canvas background embedding warning:', err);
+
+        try {
+          const imageBlob = await new Promise<Blob | null>(res => bgCanvas.toBlob(res, 'image/jpeg', 0.90));
+          if (imageBlob) {
+            const imageBuffer = await imageBlob.arrayBuffer();
+            const embeddedJpg = await pdfDoc.embedJpg(imageBuffer);
+            initialPage.drawImage(embeddedJpg, {
+              x: 0,
+              y: 0,
+              width: viewport.width,
+              height: viewport.height,
+            });
+          }
+        } catch (err) {
+          console.warn('Canvas background embedding warning:', err);
+        }
       }
 
     if (textItems.length === 0) {
+      if (options.ignoreImages) {
+        // Skip scanned image OCR when ignoring images
+        continue;
+      }
       // Scanned PDF page OCR
       if (onProgress) onProgress(pageStartPct, `Page ${pageNum} scannée : Exécution de l'OCR local...`);
       ocrImageCount++;

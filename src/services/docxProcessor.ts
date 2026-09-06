@@ -47,7 +47,7 @@ export async function processDocxFile(
 
   // 1. OCR Media Images
   const mediaFiles = Object.keys(zip.files).filter(name => name.startsWith('word/media/'));
-  if (mediaFiles.length > 0) {
+  if (!options.ignoreImages && mediaFiles.length > 0) {
     if (onProgress) onProgress(20, `Analyse OCR de ${mediaFiles.length} image(s) dans le document Word...`);
     for (const mediaPath of mediaFiles) {
       try {

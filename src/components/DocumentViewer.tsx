@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Download, Edit3, Check, RefreshCw, FileText, Image, ShieldCheck } from 'lucide-react';
+import { Download, Edit3, Check, RefreshCw, FileText, Image, ShieldCheck, FileDown, ImageOff } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import type { ProcessedDocumentResult, DocumentSection } from '../services/docxProcessor';
+import { generateTextOnlyDocxBlob } from '../services/docxExporter';
 
 interface DocumentViewerProps {
   result: ProcessedDocumentResult;
@@ -12,6 +13,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
   const [sections, setSections] = useState<DocumentSection[]>(result.sections);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
+  const [isExportingDocx, setIsExportingDocx] = useState(false);
 
   const triggerConfetti = () => {
     confetti({
@@ -31,6 +33,31 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadDocxTextOnly = async () => {
+    try {
+      setIsExportingDocx(true);
+      const docxBlob = await generateTextOnlyDocxBlob(sections);
+      triggerConfetti();
+
+      const baseName = result.fileName.replace(/\.(pdf|docx|pptx)$/i, '');
+      const docxFileName = `${baseName}_texte_seul.docx`;
+
+      const url = URL.createObjectURL(docxBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = docxFileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Erreur lors de la création du fichier Word :', err);
+      alert('Erreur lors de la génération du fichier Word.');
+    } finally {
+      setIsExportingDocx(false);
+    }
   };
 
   const startEdit = (section: DocumentSection) => {
@@ -77,18 +104,29 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto shrink-0">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto shrink-0 flex-wrap">
           <button
             onClick={onReset}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all shrink-0 whitespace-nowrap"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all shrink-0 whitespace-nowrap cursor-pointer"
           >
             <RefreshCw className="w-4 h-4" />
             <span>Nouveau document</span>
           </button>
 
           <button
+            onClick={handleDownloadDocxTextOnly}
+            disabled={isExportingDocx}
+            title="Exporte le texte traduit dans un fichier Word (.docx) sans aucune image"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl bg-indigo-900/80 hover:bg-indigo-800 border border-indigo-600/60 text-indigo-100 text-xs font-extrabold shadow-md transition-all hover:scale-[1.02] active:scale-[0.98] shrink-0 whitespace-nowrap cursor-pointer"
+          >
+            <FileDown className="w-4 h-4 text-blue-400 shrink-0" />
+            <span>{isExportingDocx ? 'Génération Word...' : 'Exporter en Word (Texte seul)'}</span>
+            <ImageOff className="w-3.5 h-3.5 text-indigo-300" />
+          </button>
+
+          <button
             onClick={handleDownload}
-            className="w-full sm:w-auto flex items-center justify-center gap-2.5 px-5 sm:px-6 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white text-xs sm:text-sm font-extrabold shadow-lg shadow-emerald-500/25 transition-all hover:scale-[1.02] active:scale-[0.98] shrink-0 whitespace-nowrap"
+            className="w-full sm:w-auto flex items-center justify-center gap-2.5 px-5 sm:px-6 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white text-xs sm:text-sm font-extrabold shadow-lg shadow-emerald-500/25 transition-all hover:scale-[1.02] active:scale-[0.98] shrink-0 whitespace-nowrap cursor-pointer"
           >
             <Download className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
             <span>Télécharger le document traduit</span>

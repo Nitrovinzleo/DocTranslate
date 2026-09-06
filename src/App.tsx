@@ -10,13 +10,14 @@ import { processDocxFile } from './services/docxProcessor';
 import type { ProcessedDocumentResult } from './services/docxProcessor';
 import { processPptxFile } from './services/pptxProcessor';
 import { processPdfFile } from './services/pdfProcessor';
-import { ShieldCheck, Play, Sparkles, FileText, Lock, Cpu } from 'lucide-react';
+import { ShieldCheck, Play, Sparkles, FileText, Lock, Cpu, ImageOff } from 'lucide-react';
 
 export function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [sourceLang, setSourceLang] = useState<string>('en');
   const [targetLang, setTargetLang] = useState<string>('fr');
   const [engineMode, setEngineMode] = useState<TranslationEngineMode>('serverless-ai');
+  const [ignoreImages, setIgnoreImages] = useState<boolean>(false);
 
   const [isTranslating, setIsTranslating] = useState<boolean>(false);
   const [progressPct, setProgressPct] = useState<number>(0);
@@ -43,6 +44,7 @@ export function App() {
       sourceLang,
       targetLang,
       engineMode,
+      ignoreImages,
       onProgress: updateProgress
     };
 
@@ -141,9 +143,9 @@ export function App() {
               disabled={isTranslating}
             />
 
-            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 flex items-center justify-center text-white font-bold text-sm shadow-md">
+                <div className="w-8 h-8 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 flex items-center justify-center text-white font-bold text-sm shadow-md shrink-0">
                   3
                 </div>
                 <div>
@@ -159,19 +161,36 @@ export function App() {
                 </div>
               </div>
 
-              <button
-                onClick={handleStartTranslation}
-                disabled={!selectedFile || isTranslating}
-                className={`w-full sm:w-auto flex items-center justify-center gap-3 px-8 py-4 rounded-2xl font-extrabold text-sm transition-all shadow-xl ${
-                  selectedFile
-                    ? 'bg-gradient-to-r from-indigo-600 via-purple-600 to-cyan-500 hover:from-indigo-500 hover:to-cyan-400 text-white shadow-indigo-500/30 hover:scale-105 active:scale-95 cursor-pointer'
-                    : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-750'
-                }`}
-              >
-                <Play className="w-5 h-5 fill-current" />
-                <span>Traduire le document maintenant</span>
-                <Sparkles className="w-5 h-5 text-cyan-200" />
-              </button>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setIgnoreImages(!ignoreImages)}
+                  disabled={isTranslating}
+                  title="Activez pour traduire uniquement le texte et ignorer l'analyse des images"
+                  className={`flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-xs font-bold border transition-all cursor-pointer shrink-0 ${
+                    ignoreImages
+                      ? 'bg-purple-950/90 border-purple-500 text-purple-200 shadow-lg shadow-purple-900/40 ring-1 ring-purple-500/50'
+                      : 'bg-slate-800/90 border-slate-700 text-slate-300 hover:border-slate-500 hover:text-white'
+                  }`}
+                >
+                  <ImageOff className={`w-4 h-4 ${ignoreImages ? 'text-purple-400' : 'text-slate-400'}`} />
+                  <span>{ignoreImages ? 'Images ignorées (Texte seul)' : 'Ignorer les images'}</span>
+                </button>
+
+                <button
+                  onClick={handleStartTranslation}
+                  disabled={!selectedFile || isTranslating}
+                  className={`flex items-center justify-center gap-3 px-8 py-4 rounded-2xl font-extrabold text-sm transition-all shadow-xl ${
+                    selectedFile
+                      ? 'bg-gradient-to-r from-indigo-600 via-purple-600 to-cyan-500 hover:from-indigo-500 hover:to-cyan-400 text-white shadow-indigo-500/30 hover:scale-105 active:scale-95 cursor-pointer'
+                      : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-750'
+                  }`}
+                >
+                  <Play className="w-5 h-5 fill-current" />
+                  <span>Traduire le document maintenant</span>
+                  <Sparkles className="w-5 h-5 text-cyan-200" />
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4">

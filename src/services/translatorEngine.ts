@@ -26,6 +26,7 @@ export interface TranslationOptions {
   targetLang: string;
   engineMode?: TranslationEngineMode;
   ollamaUrl?: string;
+  ignoreImages?: boolean;
   onProgress?: (percent: number, message: string) => void;
 }
 
