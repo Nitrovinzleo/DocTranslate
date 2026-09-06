@@ -1,32 +1,55 @@
-# React + TypeScript + Vite
+# 🔒 DocTranslate Local Studio
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+> **Application Web de Traduction de Documents 100% Confidentielle et Locale (PDF, Word, PowerPoint + OCR)**
 
-Currently, two official plugins are available:
+DocTranslate est une application web moderne permettant de traduire l'intégralité de vos documents d'entreprise ou confidentiels (**Word `.docx`**, **PowerPoint `.pptx`** et **PDF `.pdf`**) tout en préservant fidèlement la mise en page, le style et les images d'origine.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## 🛡️ Garantie de Confidentialité Stricte (0 Fuite de Données)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Calcul 100% Client-Side** : Le décodage, l'extraction XML/PDF, l'OCR (`Tesseract.js`) et la traduction neuromimétique (`Transformers.js` / WebAssembly) s'exécutent **dans la mémoire de votre propre navigateur web**.
+- **0 Serveur Distant / 0 API Cloud** : Aucune donnée n'est envoyée à OpenAI, DeepL, Google ou n'importe quel autre serveur tiers.
+- **Inférence Seule (Zéro Entraînement)** : Le modèle IA est en lecture seule et ne sauvegarde ni ne ré-entraîne aucune donnée sur vos documents.
+- **Protection des Noms Propres** : Un système d'écran d'entités (*Entity Shield*) protège automatiquement les noms de personnages, marques, auteurs et titres lors du processus de traduction.
 
-## Expanding the Oxlint configuration
+---
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+## 🚀 Fonctionnalités Clés
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+1. **Formats Supportés** :
+   - **Microsoft Word (`.docx`)** : Modification directe des nœuds XML (`<w:t>`), conservation à 100% des styles, polices, couleurs, tableaux et graphiques.
+   - **Microsoft PowerPoint (`.pptx`)** : Modification des diapositives XML (`<a:t>`), conservation des alignements, formes et modèles.
+   - **Adobe PDF (`.pdf`)** : Duplication vectorielle des pages originales avec superposition du texte traduit à l'emplacement exact des blocs d'origine.
+2. **Reconnaissance OCR Intégrée** :
+   - Extraction et traduction du texte figé dans les schémas et images (via `Tesseract.js` WebAssembly).
+3. **Prévisualisation Côte à Côte & Édition Directe** :
+   - Comparaison paragraphe par paragraphe (Original vs Traduit) avec possibilité de retoucher le texte manuellement avant téléchargement.
+
+---
+
+## 🛠️ Installation & Démarrage Local
+
+```bash
+# 1. Cloner le dépôt
+git clone https://github.com/Nitrovinzleo/DocTranslate.git
+cd DocTranslate
+
+# 2. Installer les dépendances
+npm install
+
+# 3. Lancer le serveur de développement local
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+L'application sera accessible sur **`http://localhost:5173/`**.
+
+---
+
+## 📦 Stack Technique
+
+- **Frontend** : React 19 + TypeScript + Vite + TailwindCSS
+- **Traitement XML** : `JSZip` + DOMParser
+- **Traitement PDF** : `pdfjs-dist` + `pdf-lib`
+- **OCR Local** : `Tesseract.js` (WebAssembly)
+- **IA Locale** : `@xenova/transformers` (Opus-MT / ONNX WASM)
