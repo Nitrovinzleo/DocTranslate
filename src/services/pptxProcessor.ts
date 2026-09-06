@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import { translateText } from './translatorEngine';
+import { translateTextBatch, translateText } from './translatorEngine';
 import type { TranslationOptions } from './translatorEngine';
 import { performLocalOCR } from './ocrService';
 import type { DocumentSection, ProcessedDocumentResult } from './docxProcessor';
@@ -54,7 +54,7 @@ export async function processPptxFile(
     }
   }
 
-  // 2. Translate text aggregated at slide paragraph level <a:p>
+  // 2. High-speed parallel batch translation per slide
   const totalSlides = slideFiles.length;
   for (let slideIdx = 0; slideIdx < totalSlides; slideIdx++) {
     const slidePath = slideFiles[slideIdx];
@@ -62,37 +62,47 @@ export async function processPptxFile(
     const xmlDoc = parser.parseFromString(xmlContent, 'application/xml');
 
     const paragraphs = Array.from(xmlDoc.getElementsByTagName('a:p'));
-    for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
-      const p = paragraphs[pIdx];
+    const validParagraphData: Array<{ textNodes: Element[]; fullText: string }> = [];
+
+    for (const p of paragraphs) {
       const textNodes = Array.from(p.getElementsByTagName('a:t'));
       if (textNodes.length === 0) continue;
 
       const fullText = textNodes.map(n => n.textContent || '').join('');
       if (!fullText.trim()) continue;
 
+      validParagraphData.push({ textNodes, fullText });
       totalWords += fullText.split(/\s+/).filter(Boolean).length;
+    }
 
-      const currentProgress = Math.round(
-        30 + ((slideIdx + (pIdx + 1) / paragraphs.length) / totalSlides) * 65
-      );
-
-      if (onProgress) {
-        onProgress(currentProgress, `Diapositive ${slideIdx + 1}/${totalSlides} - Traduction du texte...`);
-      }
-
-      const translatedText = await translateText(fullText, options);
-
-      textNodes[0].textContent = translatedText;
-      for (let k = 1; k < textNodes.length; k++) {
-        textNodes[k].textContent = '';
-      }
-
-      sections.push({
-        id: `slide-${slideIdx + 1}-p${pIdx}`,
-        originalText: fullText,
-        translatedText,
-        type: 'paragraph'
+    if (validParagraphData.length > 0) {
+      const paragraphTexts = validParagraphData.map(d => d.fullText);
+      const translatedBatch = await translateTextBatch(paragraphTexts, {
+        ...options,
+        onProgress: (pct, msg) => {
+          const currentProgress = Math.round(
+            30 + ((slideIdx + pct / 100) / totalSlides) * 65
+          );
+          if (onProgress) onProgress(currentProgress, msg);
+        }
       });
+
+      for (let i = 0; i < validParagraphData.length; i++) {
+        const { textNodes, fullText } = validParagraphData[i];
+        const translatedText = translatedBatch[i] || fullText;
+
+        textNodes[0].textContent = translatedText;
+        for (let k = 1; k < textNodes.length; k++) {
+          textNodes[k].textContent = '';
+        }
+
+        sections.push({
+          id: `slide-${slideIdx + 1}-p${i}`,
+          originalText: fullText,
+          translatedText,
+          type: 'paragraph'
+        });
+      }
     }
 
     const updatedXmlContent = serializer.serializeToString(xmlDoc);

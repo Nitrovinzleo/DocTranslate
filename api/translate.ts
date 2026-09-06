@@ -1,5 +1,3 @@
-import type { RequestContext } from '@vercel/functions';
-
 export default async function handler(req: Request) {
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -9,53 +7,76 @@ export default async function handler(req: Request) {
   }
 
   try {
-    const { text, sourceLang = 'en', targetLang = 'fr' } = await req.json();
+    const body = await req.json();
+    const sourceLang = body.sourceLang || 'en';
+    const targetLang = body.targetLang || 'fr';
 
-    if (!text || !text.trim() || sourceLang === targetLang) {
-      return new Response(JSON.stringify({ translatedText: text }), {
+    // Support single text string or batch array of texts
+    const inputTexts: string[] = Array.isArray(body.texts) 
+      ? body.texts 
+      : body.text 
+      ? [body.text] 
+      : [];
+
+    if (inputTexts.length === 0 || sourceLang === targetLang) {
+      return new Response(JSON.stringify({ 
+        translatedText: body.text || '', 
+        translatedTexts: inputTexts 
+      }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
-    // 1. Primary Neural Provider: Free Confidential Lingva / MyMemory API (Zero Logging / Zero Training)
-    try {
-      const lingvaUrl = `https://lingva.ml/api/v1/${sourceLang}/${targetLang}/${encodeURIComponent(text)}`;
-      const lingvaRes = await fetch(lingvaUrl, { signal: AbortSignal.timeout(4000) });
-      if (lingvaRes.ok) {
-        const data = await lingvaRes.json();
-        if (data.translation) {
-          return new Response(JSON.stringify({ translatedText: data.translation }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          });
+    // Process batch items in parallel with zero-log confidential translation providers
+    const translatedTexts = await Promise.all(
+      inputTexts.map(async (text) => {
+        if (!text || !text.trim() || /^[\d\s\W]+$/.test(text.trim())) {
+          return text;
         }
-      }
-    } catch (err) {
-      console.warn('Lingva provider fallback:', err);
-    }
 
-    // 2. Secondary Neural Provider: MyMemory Translation API
-    try {
-      const langPair = `${sourceLang}|${targetLang}`;
-      const myMemoryUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${langPair}`;
-      const myMemRes = await fetch(myMemoryUrl, { signal: AbortSignal.timeout(4000) });
-      if (myMemRes.ok) {
-        const data = await myMemRes.json();
-        if (data.responseData?.translatedText) {
-          return new Response(JSON.stringify({ translatedText: data.responseData.translatedText }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          });
+        const cleanText = text.trim();
+
+        // Provider 1: Lingva API
+        try {
+          const lingvaUrl = `https://lingva.ml/api/v1/${sourceLang}/${targetLang}/${encodeURIComponent(cleanText)}`;
+          const lingvaRes = await fetch(lingvaUrl, { signal: AbortSignal.timeout(3500) });
+          if (lingvaRes.ok) {
+            const data = await lingvaRes.json();
+            if (data.translation) return data.translation;
+          }
+        } catch (e) {
+          // fallback
         }
-      }
-    } catch (err) {
-      console.warn('MyMemory provider fallback:', err);
-    }
 
-    return new Response(JSON.stringify({ translatedText: text }), {
+        // Provider 2: MyMemory API
+        try {
+          const langPair = `${sourceLang}|${targetLang}`;
+          const myMemUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanText)}&langpair=${langPair}`;
+          const myMemRes = await fetch(myMemUrl, { signal: AbortSignal.timeout(3500) });
+          if (myMemRes.ok) {
+            const data = await myMemRes.json();
+            if (data.responseData?.translatedText && !data.responseData.translatedText.includes('MYMEMORY WARNING')) {
+              return data.responseData.translatedText;
+            }
+          }
+        } catch (e) {
+          // fallback
+        }
+
+        return text;
+      })
+    );
+
+    return new Response(JSON.stringify({ 
+      translatedText: translatedTexts[0] || '',
+      translatedTexts 
+    }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+      },
     });
   } catch (error: any) {
     return new Response(JSON.stringify({ error: error?.message || 'Translation error' }), {

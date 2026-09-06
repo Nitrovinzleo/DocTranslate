@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import { translateText } from './translatorEngine';
+import { translateTextBatch, translateText } from './translatorEngine';
 import type { TranslationOptions } from './translatorEngine';
 import { performLocalOCR } from './ocrService';
 
@@ -70,50 +70,57 @@ export async function processDocxFile(
     }
   }
 
-  // 2. Paragraph-level sentence translation for exact layout & grammar
+  // 2. High-speed parallel batch paragraph translation
   let processedFilesCount = 0;
   for (const xmlPath of xmlFiles) {
     const xmlContent = await zip.files[xmlPath].async('text');
     const xmlDoc = parser.parseFromString(xmlContent, 'application/xml');
 
     const paragraphs = Array.from(xmlDoc.getElementsByTagName('w:p'));
-    const totalParagraphs = paragraphs.length;
+    const validParagraphData: Array<{ pNode: Element; textNodes: Element[]; fullText: string }> = [];
 
-    for (let i = 0; i < totalParagraphs; i++) {
-      const p = paragraphs[i];
+    for (const p of paragraphs) {
       const textNodes = Array.from(p.getElementsByTagName('w:t'));
       if (textNodes.length === 0) continue;
 
       const fullText = textNodes.map(n => n.textContent || '').join('');
       if (!fullText.trim()) continue;
 
+      validParagraphData.push({ pNode: p, textNodes, fullText });
       totalWords += fullText.split(/\s+/).filter(Boolean).length;
+    }
 
-      const currentProgress = Math.round(
-        30 + ((processedFilesCount + (i + 1) / totalParagraphs) / xmlFiles.length) * 65
-      );
-
-      if (onProgress) {
-        onProgress(currentProgress, `Traduction Word paragraphe ${i + 1}/${totalParagraphs}...`);
-      }
-
-      const translatedText = await translateText(fullText, options);
-
-      // Distribute translated sentence safely into nodes
-      textNodes[0].textContent = translatedText;
-      if (translatedText.startsWith(' ') || translatedText.endsWith(' ')) {
-        textNodes[0].setAttribute('xml:space', 'preserve');
-      }
-      for (let k = 1; k < textNodes.length; k++) {
-        textNodes[k].textContent = '';
-      }
-
-      sections.push({
-        id: `${xmlPath}-p${i}`,
-        originalText: fullText,
-        translatedText,
-        type: 'paragraph'
+    if (validParagraphData.length > 0) {
+      const paragraphTexts = validParagraphData.map(d => d.fullText);
+      const translatedBatch = await translateTextBatch(paragraphTexts, {
+        ...options,
+        onProgress: (pct, msg) => {
+          const currentProgress = Math.round(
+            30 + ((processedFilesCount + pct / 100) / xmlFiles.length) * 65
+          );
+          if (onProgress) onProgress(currentProgress, msg);
+        }
       });
+
+      for (let i = 0; i < validParagraphData.length; i++) {
+        const { textNodes, fullText } = validParagraphData[i];
+        const translatedText = translatedBatch[i] || fullText;
+
+        textNodes[0].textContent = translatedText;
+        if (translatedText.startsWith(' ') || translatedText.endsWith(' ')) {
+          textNodes[0].setAttribute('xml:space', 'preserve');
+        }
+        for (let k = 1; k < textNodes.length; k++) {
+          textNodes[k].textContent = '';
+        }
+
+        sections.push({
+          id: `${xmlPath}-p${i}`,
+          originalText: fullText,
+          translatedText,
+          type: 'paragraph'
+        });
+      }
     }
 
     const updatedXmlContent = serializer.serializeToString(xmlDoc);

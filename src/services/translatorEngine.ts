@@ -29,18 +29,17 @@ export interface TranslationOptions {
   onProgress?: (percent: number, message: string) => void;
 }
 
-// Protected Proper Nouns (Names, Brands, Titles)
+// Protected Proper Nouns that must remain unchanged
 const PROTECTED_PROPER_NOUNS = [
   'Gaumont', 'Lisa Kohn', 'Virginy L. Sam', 'Journal dune Peste', "Journal d'une Peste",
   'Fanny', 'Sonia', 'John', 'Eva', 'Pépé', 'Linda', 'Charley', 'Marilyn', 'Theo',
   'Madame Turant', 'Semi-Colon', 'Perfect Family', 'Tooth Fairy', 'BRAT Revolution',
-  'BRAT Support Group', 'BRAT Rule', 'BRAT Rules', 'BRAT', 'BRATs', 'BRAT-isophical',
-  'Lindaventions', 'Lindavention', 'BRATocracy', 'Picture Day', 'Save Room for Two Desserts Campaign'
+  'BRAT Support Group', 'BRAT Rule', 'BRAT Rules', 'BRATs', 'BRAT'
 ];
 
-/**
- * Normalize curly quotes and apostrophes to standard characters
- */
+// In-memory cache for fast zero-latency repeat translation
+const translationCache: Record<string, string> = {};
+
 function normalizeQuotes(text: string): string {
   if (!text) return '';
   return text
@@ -48,9 +47,6 @@ function normalizeQuotes(text: string): string {
     .replace(/[\u201C\u201D«»"]/g, '"');
 }
 
-/**
- * Protect Proper Nouns with tokens before translation
- */
 function protectProperNouns(text: string): { protectedText: string; map: Record<string, string> } {
   let protectedText = text;
   const map: Record<string, string> = {};
@@ -59,7 +55,7 @@ function protectProperNouns(text: string): { protectedText: string; map: Record<
   for (const name of PROTECTED_PROPER_NOUNS) {
     const regex = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
     if (regex.test(protectedText)) {
-      const token = `__PN_${counter}__`;
+      const token = `__XPN${counter}X__`;
       map[token] = name;
       protectedText = protectedText.replace(regex, token);
       counter++;
@@ -78,116 +74,140 @@ function restoreProperNouns(text: string, map: Record<string, string>): string {
 }
 
 /**
- * Fetch Neural Translation from Vercel Serverless Function or Free API
+ * High-performance batch translation via Vercel serverless / parallel providers
  */
-async function fetchNeuralTranslation(text: string, sourceLang: string, targetLang: string): Promise<string | null> {
-  const normalized = normalizeQuotes(text);
+export async function translateTextBatch(
+  texts: string[],
+  options: TranslationOptions
+): Promise<string[]> {
+  const { sourceLang, targetLang, onProgress } = options;
+  const total = texts.length;
+  if (total === 0) return [];
 
-  // 1. Try Vercel Serverless Function (/api/translate)
-  try {
-    const res = await fetch('/api/translate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: normalized, sourceLang, targetLang }),
-      signal: AbortSignal.timeout(4000)
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.translatedText && data.translatedText !== normalized) {
-        return data.translatedText;
-      }
+  const results: string[] = new Array(total);
+  const uncachedIndices: number[] = [];
+  const uncachedTexts: string[] = [];
+
+  // Check cache first
+  for (let i = 0; i < total; i++) {
+    const raw = texts[i];
+    if (!raw || !raw.trim() || sourceLang === targetLang || /^[\d\s\W]+$/.test(raw.trim())) {
+      results[i] = raw;
+      continue;
     }
-  } catch (e) {
-    // ignore
+
+    const cacheKey = `${sourceLang}:${targetLang}:${raw}`;
+    if (translationCache[cacheKey]) {
+      results[i] = translationCache[cacheKey];
+    } else {
+      uncachedIndices.push(i);
+      uncachedTexts.push(raw);
+    }
   }
 
-  // 2. Direct Lingva Neural API Fallback (Free, Confidential, Zero Logging)
-  try {
-    const lingvaUrl = `https://lingva.ml/api/v1/${sourceLang}/${targetLang}/${encodeURIComponent(normalized)}`;
-    const res = await fetch(lingvaUrl, { signal: AbortSignal.timeout(4000) });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.translation) {
-        return data.translation;
-      }
-    }
-  } catch (e) {
-    // ignore
+  if (uncachedTexts.length === 0) {
+    if (onProgress) onProgress(100, 'Traduction ultra-rapide terminée (100% cache).');
+    return results;
   }
 
-  // 3. Direct MyMemory Neural API Fallback (Free, Zero Storage)
-  try {
-    const langPair = `${sourceLang}|${targetLang}`;
-    const myMemUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(normalized)}&langpair=${langPair}`;
-    const res = await fetch(myMemUrl, { signal: AbortSignal.timeout(4000) });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.responseData?.translatedText) {
-        return data.responseData.translatedText;
-      }
+  // Batch process uncached texts in parallel chunks of 15
+  const CHUNK_SIZE = 15;
+  const numChunks = Math.ceil(uncachedTexts.length / CHUNK_SIZE);
+
+  for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
+    const currentProgress = Math.round(20 + ((chunkIdx + 1) / numChunks) * 75);
+    if (onProgress) {
+      onProgress(currentProgress, `Traduction parallèle Vercel (Lot ${chunkIdx + 1}/${numChunks})...`);
     }
-  } catch (e) {
-    // ignore
+
+    const start = chunkIdx * CHUNK_SIZE;
+    const end = Math.min(uncachedTexts.length, start + CHUNK_SIZE);
+    const chunkTexts = uncachedTexts.slice(start, end);
+    const chunkIndices = uncachedIndices.slice(start, end);
+
+    // Apply proper noun protection
+    const protectedChunk = chunkTexts.map(t => protectProperNouns(normalizeQuotes(t)));
+
+    try {
+      // Send batch to Vercel Serverless Function / API
+      const res = await fetch('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          texts: protectedChunk.map(p => p.protectedText),
+          sourceLang,
+          targetLang,
+        }),
+        signal: AbortSignal.timeout(6000)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const translatedArray: string[] = data.translatedTexts || [data.translatedText];
+
+        for (let k = 0; k < chunkTexts.length; k++) {
+          const originalRaw = chunkTexts[k];
+          const rawTrans = translatedArray[k] || chunkTexts[k];
+          const restored = restoreProperNouns(rawTrans, protectedChunk[k].map);
+          
+          results[chunkIndices[k]] = restored;
+          translationCache[`${sourceLang}:${targetLang}:${originalRaw}`] = restored;
+        }
+        continue;
+      }
+    } catch (e) {
+      console.warn('Batch translation API timeout/error, falling back to individual parallel requests', e);
+    }
+
+    // Individual parallel fallback if batch serverless call fails
+    await Promise.all(
+      chunkTexts.map(async (text, k) => {
+        const indexInResults = chunkIndices[k];
+        const { protectedText, map } = protectedChunk[k];
+
+        let trans = protectedText;
+        try {
+          const lingvaUrl = `https://lingva.ml/api/v1/${sourceLang}/${targetLang}/${encodeURIComponent(protectedText)}`;
+          const r = await fetch(lingvaUrl, { signal: AbortSignal.timeout(3000) });
+          if (r.ok) {
+            const data = await r.json();
+            if (data.translation) trans = data.translation;
+          }
+        } catch (err) {
+          // try MyMemory
+          try {
+            const langPair = `${sourceLang}|${targetLang}`;
+            const myMemUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(protectedText)}&langpair=${langPair}`;
+            const r = await fetch(myMemUrl, { signal: AbortSignal.timeout(3000) });
+            if (r.ok) {
+              const data = await r.json();
+              if (data.responseData?.translatedText && !data.responseData.translatedText.includes('MYMEMORY WARNING')) {
+                trans = data.responseData.translatedText;
+              }
+            }
+          } catch (mErr) {
+            // fallback
+          }
+        }
+
+        const restored = restoreProperNouns(trans, map);
+        results[indexInResults] = restored;
+        translationCache[`${sourceLang}:${targetLang}:${text}`] = restored;
+      })
+    );
   }
 
-  return null;
+  if (onProgress) onProgress(100, 'Traduction terminée avec succès !');
+  return results;
 }
 
 /**
- * Main translation function
+ * Single text translation wrapper
  */
 export async function translateText(
   text: string,
   options: TranslationOptions
 ): Promise<string> {
-  const { sourceLang, targetLang } = options;
-
-  if (!text || !text.trim() || sourceLang === targetLang) {
-    return text;
-  }
-
-  const leadingSpace = text.match(/^\s*/)?.[0] || '';
-  const trailingSpace = text.match(/\s*$/)?.[0] || '';
-  const cleanText = text.trim();
-
-  if (/^[\d\s\W]+$/.test(cleanText)) {
-    return text;
-  }
-
-  // Protect Proper Nouns first
-  const { protectedText, map } = protectProperNouns(cleanText);
-
-  // Perform Neural Translation
-  let translatedStr = await fetchNeuralTranslation(protectedText, sourceLang, targetLang);
-
-  if (!translatedStr || translatedStr === protectedText) {
-    // Fallback dictionary translation if offline
-    translatedStr = protectedText;
-  }
-
-  // Restore Proper Nouns
-  const finalResult = restoreProperNouns(translatedStr, map);
-
-  return leadingSpace + finalResult + trailingSpace;
-}
-
-export async function translateTextBatch(
-  texts: string[],
-  options: TranslationOptions
-): Promise<string[]> {
-  const results: string[] = [];
-  const total = texts.length;
-  if (total === 0) return results;
-
-  for (let i = 0; i < total; i++) {
-    const currentPct = Math.round(((i + 1) / total) * 100);
-    if (options.onProgress) {
-      options.onProgress(currentPct, `Traduction du segment ${i + 1} / ${total}...`);
-    }
-
-    const translated = await translateText(texts[i], options);
-    results.push(translated);
-  }
-
-  return results;
+  const batchResult = await translateTextBatch([text], options);
+  return batchResult[0] || text;
 }
