@@ -38,8 +38,8 @@ export const Header: React.FC<HeaderProps> = ({
               </h1>
             </div>
             <p className="text-xs text-slate-400 font-medium flex items-center gap-1.5 mt-0.5">
-              <Lock className="w-3 h-3 text-emerald-400 inline" />
-              <span>100% Confidentiel & Client-Side (0 données envoyées)</span>
+              <Lock className="w-3.5 h-3.5 text-emerald-400 inline shrink-0" />
+              <span>100% Confidentiel • IA sur nos serveurs (Réinitialisée à chaque utilisation – 0 fuite)</span>
             </p>
           </div>
         </div>

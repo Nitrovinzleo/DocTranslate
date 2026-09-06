@@ -101,13 +101,13 @@ export function App() {
             <div>
               <strong className="text-white font-bold">100% Confidentiel & Zéro Fuite :</strong>
               <span className="ml-1 text-slate-300">
-                Vos documents et images restent exclusivement sur votre appareil. L'IA tourne en mémoire locale (Inférence seule - aucun ré-entraînement possible).
+                La traduction s'exécute sur une IA confidentielle hébergée sur nos serveurs dédiés. L'instance est automatiquement <strong>RÉINITIALISÉE À CHAQUE UTILISATION</strong> : aucun stockage, aucun log et aucune fuite de données.
               </span>
             </div>
           </div>
           <button
             onClick={() => setIsPrivacyModalOpen(true)}
-            className="shrink-0 px-3 py-1.5 rounded-xl bg-emerald-900/60 hover:bg-emerald-800/80 text-emerald-200 text-xs font-semibold border border-emerald-700/60 transition-all cursor-pointer"
+            className="shrink-0 px-3.5 py-2 rounded-xl bg-emerald-900/60 hover:bg-emerald-800/80 text-emerald-200 text-xs font-semibold border border-emerald-700/60 transition-all cursor-pointer whitespace-nowrap"
           >
             En savoir plus
           </button>

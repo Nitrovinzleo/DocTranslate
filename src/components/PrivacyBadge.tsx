@@ -46,9 +46,9 @@ export const PrivacyBadge: React.FC<PrivacyBadgeProps> = ({ isOpen, onClose }) =
           <div className="flex items-start gap-3.5 p-3.5 bg-slate-950/60 border border-slate-800 rounded-2xl">
             <ServerOff className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
             <div>
-              <h4 className="font-semibold text-white text-sm">0 Téléversement Serveur</h4>
+              <h4 className="font-semibold text-white text-sm">Instance IA Réinitialisée à Chaque Utilisation</h4>
               <p className="text-xs text-slate-400 mt-0.5">
-                Vos documents (Word, PDF, PowerPoint) sont lus, décodés et traduits intégralement dans la mémoire RAM de votre propre navigateur internet.
+                La traduction s'exécute sur une IA confidentielle hébergée sur nos serveurs dédiés. L'environnement d'exécution est automatiquement <strong>réinitialisé à zéro après chaque document</strong> : 0 données conservées, 0 log, 0 fuite.
               </p>
             </div>
           </div>
@@ -56,9 +56,9 @@ export const PrivacyBadge: React.FC<PrivacyBadgeProps> = ({ isOpen, onClose }) =
           <div className="flex items-start gap-3.5 p-3.5 bg-slate-950/60 border border-slate-800 rounded-2xl">
             <EyeOff className="w-5 h-5 text-cyan-400 shrink-0 mt-0.5" />
             <div>
-              <h4 className="font-semibold text-white text-sm">Zéro Entraînement d'IA & Confidentialité Absolue</h4>
+              <h4 className="font-semibold text-white text-sm">Inférence Seule & Zéro Entraînement</h4>
               <p className="text-xs text-slate-400 mt-0.5">
-                Le modèle IA (`Transformers.js`) tourne en mode lecture seule (Inference Only). Aucun prompt, texte ou document n'est sauvegardé ou utilisé pour entraîner une intelligence artificielle.
+                Le modèle d'IA fonctionne exclusivement en mode inférence temporaire. Aucun texte, prompt ou document n'est sauvegardé ou utilisé pour entraîner un modèle.
               </p>
             </div>
           </div>
