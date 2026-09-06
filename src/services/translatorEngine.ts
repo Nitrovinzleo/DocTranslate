@@ -45,6 +45,10 @@ function applyDomainPostProcessing(text: string, src: string, tgt: string): stri
 
   let result = text;
   result = result.replace(/\bDIARY OF A BRAT\b/gi, "JOURNAL D'UNE PESTE");
+  result = result.replace(/\bWHEN DO WE ENTER THE DIARY\s*\?\b/gi, "QUAND ENTRE-T-ON DANS LE JOURNAL ?");
+  result = result.replace(/\bWHERE FANNY DIGS DEEP\b/gi, "OÙ FANNY EXPLORE SES ÉMOTIONS");
+  result = result.replace(/\bFANNY'S DIARY\b/gi, "LE JOURNAL DE FANNY");
+  result = result.replace(/\bTHE DIARY\b/gi, "LE JOURNAL");
   result = result.replace(/\bBRAT Revolution\b/gi, "Révolution PESTE");
   result = result.replace(/\bBRAT Support Group\b/gi, "Groupe de Soutien PESTE");
   result = result.replace(/\bBRAT Rule\b/gi, "Règle PESTE");

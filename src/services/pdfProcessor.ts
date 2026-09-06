@@ -75,20 +75,21 @@ export async function processPdfFile(
   let totalWords = 0;
   let ocrImageCount = 0;
 
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
     const pageStartPct = Math.round(15 + ((pageNum - 1) / totalPages) * 75);
     const pageEndPct = Math.round(15 + (pageNum / totalPages) * 75);
 
-    if (onProgress) onProgress(pageStartPct, `Traduction et superposition de la page PDF ${pageNum}/${totalPages}...`);
+    if (onProgress) onProgress(pageStartPct, `Traduction et mise en page intelligente PDF (Page ${pageNum}/${totalPages})...`);
 
     const page = await pdfjsDoc.getPage(pageNum);
     const viewport = page.getViewport({ scale: 1.0 });
 
     const newPage = pdfDoc.addPage([viewport.width, viewport.height]);
 
-    // Draw background original page visually intact
+    // Draw background original page (images, borders, graphics)
     if (embeddedPages && embeddedPages[pageNum - 1]) {
       try {
         newPage.drawPage(embeddedPages[pageNum - 1], {
@@ -151,13 +152,26 @@ export async function processPdfFile(
             const maxW = Math.max(40, viewport.width - line.bbox.x0 - 20);
             const wrappedLines = wrapTextToLines(cleanTextForPdf, fontHeight, maxW);
 
+            // Erase background box for OCR line
+            const boxY = Math.max(0, viewport.height - line.bbox.y1 - 2);
+            const boxH = Math.max(fontHeight * 1.3, line.bbox.y1 - line.bbox.y0 + 4);
+            try {
+              newPage.drawRectangle({
+                x: Math.max(0, line.bbox.x0 - 4),
+                y: boxY,
+                width: Math.min(viewport.width - line.bbox.x0, (line.bbox.x1 - line.bbox.x0) + 8),
+                height: boxH,
+                color: rgb(1, 1, 1),
+              });
+            } catch (e) {}
+
             for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
               try {
                 newPage.drawText(wrappedLines[lIdx], {
                   x: Math.max(10, Math.min(viewport.width - 50, line.bbox.x0)),
-                  y: Math.max(10, viewport.height - line.bbox.y1 - (lIdx * fontHeight * 1.1)),
+                  y: Math.max(10, viewport.height - line.bbox.y1 - (lIdx * fontHeight * 1.15)),
                   size: fontHeight,
-                  font,
+                  font: fontRegular,
                   color: rgb(0.1, 0.1, 0.2),
                 });
               } catch (e) {
@@ -168,11 +182,60 @@ export async function processPdfFile(
         }
       }
     } else {
-      // Vector PDF text items
+      // Vector PDF text items: Group items into horizontal lines (by Y coordinate)
       const validItems = textItems.filter(item => item.str && item.str.trim().length > 0);
-      const rawPageTexts = validItems.map(item => item.str);
 
-      const translatedBatch = await translateTextBatch(rawPageTexts, {
+      interface LineGroup {
+        y: number;
+        minX: number;
+        maxX: number;
+        maxFontSize: number;
+        isHeading: boolean;
+        rawTexts: string[];
+      }
+
+      const lineGroups: LineGroup[] = [];
+
+      for (const item of validItems) {
+        const str = item.str.trim();
+        if (!str) continue;
+
+        const transform = item.transform;
+        const x = transform[4];
+        const y = transform[5];
+        const fontSize = Math.abs(transform[0]) || Math.abs(transform[3]) || 12;
+        const approxWidth = (item.width || str.length * fontSize * 0.5);
+
+        // Find existing line group matching Y coordinate
+        let group = lineGroups.find(g => Math.abs(g.y - y) < 4);
+        if (!group) {
+          group = {
+            y,
+            minX: x,
+            maxX: x + approxWidth,
+            maxFontSize: fontSize,
+            isHeading: fontSize >= 14 || (str.length < 50 && str === str.toUpperCase() && /^[A-Z\s]{4,}$/.test(str)),
+            rawTexts: [str],
+          };
+          lineGroups.push(group);
+        } else {
+          group.minX = Math.min(group.minX, x);
+          group.maxX = Math.max(group.maxX, x + approxWidth);
+          group.maxFontSize = Math.max(group.maxFontSize, fontSize);
+          if (fontSize >= 14 || (str.length < 50 && str === str.toUpperCase())) {
+            group.isHeading = true;
+          }
+          group.rawTexts.push(str);
+        }
+      }
+
+      // Sort line groups vertically (top to bottom)
+      lineGroups.sort((a, b) => b.y - a.y);
+
+      // Translate combined line texts
+      const combinedLineTexts = lineGroups.map(g => g.rawTexts.join(' '));
+
+      const translatedBatch = await translateTextBatch(combinedLineTexts, {
         ...options,
         onProgress: (subPct, msg) => {
           const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
@@ -180,42 +243,59 @@ export async function processPdfFile(
         }
       });
 
-      for (let i = 0; i < validItems.length; i++) {
-        const item = validItems[i];
-        const str = item.str || '';
-        const translatedStr = translatedBatch[i] || str;
+      for (let i = 0; i < lineGroups.length; i++) {
+        const group = lineGroups[i];
+        const rawLineText = combinedLineTexts[i];
+        const translatedLineText = translatedBatch[i] || rawLineText;
 
-        const transform = item.transform;
-        const x = transform[4];
-        const y = transform[5];
-        const fontSize = Math.abs(transform[0]) || Math.abs(transform[3]) || 12;
-
-        totalWords += str.split(/\s+/).filter(Boolean).length;
+        totalWords += rawLineText.split(/\s+/).filter(Boolean).length;
 
         sections.push({
-          id: `pdf-p${pageNum}-i${i}`,
-          originalText: str,
-          translatedText: translatedStr,
-          type: 'paragraph'
+          id: `pdf-p${pageNum}-line${i}`,
+          originalText: rawLineText,
+          translatedText: translatedLineText,
+          type: group.isHeading ? 'heading' : 'paragraph'
         });
 
-        const cleanTextForPdf = sanitizeForPdf(translatedStr);
-        if (cleanTextForPdf) {
-          const maxW = Math.max(40, viewport.width - x - 20);
-          const wrappedLines = wrapTextToLines(cleanTextForPdf, fontSize, maxW);
+        const cleanTextForPdf = sanitizeForPdf(translatedLineText);
+        if (!cleanTextForPdf) continue;
 
-          for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
-            try {
-              newPage.drawText(wrappedLines[lIdx], {
-                x: Math.max(5, Math.min(viewport.width - 40, x)),
-                y: Math.max(5, Math.min(viewport.height - 15, y - (lIdx * fontSize * 1.15))),
-                size: Math.min(22, Math.max(8, fontSize)),
-                font,
-                color: rgb(0.1, 0.1, 0.2),
-              });
-            } catch (e) {
-              console.warn('PDF draw text skipped:', e);
-            }
+        const fontSize = Math.min(24, Math.max(8, group.maxFontSize));
+        const activeFont = group.isHeading ? fontBold : fontRegular;
+        const fontColor = group.isHeading ? rgb(0.05, 0.05, 0.15) : rgb(0.12, 0.12, 0.25);
+
+        const maxW = Math.max(40, viewport.width - group.minX - 20);
+        const wrappedLines = wrapTextToLines(cleanTextForPdf, fontSize, maxW);
+
+        // Erase background box (masking original English text)
+        const maskHeight = Math.max(fontSize * 1.35 * wrappedLines.length, 14);
+        const maskY = Math.max(0, group.y - (wrappedLines.length - 1) * fontSize * 1.2 - 2);
+        const maskWidth = Math.min(viewport.width - group.minX + 4, Math.max(group.maxX - group.minX + 16, 60));
+
+        try {
+          newPage.drawRectangle({
+            x: Math.max(0, group.minX - 4),
+            y: maskY,
+            width: maskWidth,
+            height: maskHeight,
+            color: rgb(1, 1, 1), // White rectangle erases old English text underneath
+          });
+        } catch (e) {
+          console.warn('PDF erase background rectangle error:', e);
+        }
+
+        // Draw translated lines
+        for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
+          try {
+            newPage.drawText(wrappedLines[lIdx], {
+              x: Math.max(5, Math.min(viewport.width - 40, group.minX)),
+              y: Math.max(5, Math.min(viewport.height - 15, group.y - (lIdx * fontSize * 1.2))),
+              size: fontSize,
+              font: activeFont,
+              color: fontColor,
+            });
+          } catch (e) {
+            console.warn('PDF draw line text error:', e);
           }
         }
       }
