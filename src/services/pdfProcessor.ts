@@ -362,8 +362,9 @@ export async function processPdfFile(
         }
       });
 
-      // Track vertical Y cursor to prevent line collisions and handle page overflows
-      let currentYCursor = viewport.height - 25;
+      // Track vertical Y cursor to prevent line collisions and handle page overflows cleanly
+      let currentYCursor = viewport.height - 35;
+      const SAFE_BOTTOM_MARGIN = 55;
 
       for (let i = 0; i < paragraphBlocks.length; i++) {
         const block = paragraphBlocks[i];
@@ -403,16 +404,17 @@ export async function processPdfFile(
         const minGapBelow = isLargeHeading ? 14 : 6;
 
         let lineY = block.y;
-        if (!block.isFooterBrand) {
-          lineY = Math.min(block.y, currentYCursor - minGapAbove);
-        }
 
-        // Check if this block will overflow the current page bottom margin (< 40px)
-        const blockHeightNeeded = fontLineHeight * wrappedLines.length + minGapBelow;
-        if (!block.isFooterBrand && (lineY - blockHeightNeeded < 40)) {
-          // PAGE BREAK: Create a new overflow page cleanly!
-          currentPage = pdfDoc.addPage([viewport.width, viewport.height]);
-          currentYCursor = viewport.height - 35;
+        if (!block.isFooterBrand) {
+          const blockHeightNeeded = (fontLineHeight * wrappedLines.length) + minGapAbove + minGapBelow;
+
+          // Check if this block overflows current page bottom margin OR starts below SAFE_BOTTOM_MARGIN
+          if (currentYCursor - blockHeightNeeded < SAFE_BOTTOM_MARGIN || block.y < SAFE_BOTTOM_MARGIN) {
+            // PAGE BREAK: Create a new overflow page cleanly!
+            currentPage = pdfDoc.addPage([viewport.width, viewport.height]);
+            currentYCursor = viewport.height - 35;
+          }
+
           lineY = currentYCursor - minGapAbove;
         }
 
@@ -438,15 +440,7 @@ export async function processPdfFile(
 
         // Render each wrapped line of the block
         for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
-          let targetY = lineY - (lIdx * fontLineHeight);
-
-          // Line-level page overflow check
-          if (!block.isFooterBrand && targetY < 25) {
-            currentPage = pdfDoc.addPage([viewport.width, viewport.height]);
-            currentYCursor = viewport.height - 35;
-            lineY = currentYCursor;
-            targetY = lineY;
-          }
+          const targetY = lineY - (lIdx * fontLineHeight);
 
           try {
             currentPage.drawText(wrappedLines[lIdx], {
