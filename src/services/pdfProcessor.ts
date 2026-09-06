@@ -27,10 +27,11 @@ function sanitizeForPdf(text: string): string {
  * Favors breaking at natural punctuation marks (., !, ?, ,, ;, :, —, «, »)
  * and prevents cutting mid-sentence or mid-clause awkwardly.
  */
-function smartWrapTextToLines(text: string, fontSize: number, maxPixelWidth: number): string[] {
+function smartWrapTextToLines(text: string, fontSize: number, maxPixelWidth: number, isHeading: boolean = false): string[] {
   if (!text) return [];
-  const approxCharWidth = fontSize * 0.52;
-  const maxCharsPerLine = Math.max(15, Math.floor(maxPixelWidth / approxCharWidth));
+  // Use wider char width factor (0.68) for bold/heading uppercase text to prevent horizontal overflow
+  const approxCharWidth = isHeading ? fontSize * 0.68 : fontSize * 0.52;
+  const maxCharsPerLine = Math.max(10, Math.floor(maxPixelWidth / approxCharWidth));
 
   const words = text.split(/\s+/).filter(Boolean);
   if (words.length === 0) return [];
@@ -120,116 +121,7 @@ async function withSilencedPdfParserLogs<T>(fn: () => Promise<T>): Promise<T> {
 
 
 
-interface ExtractedPdfImage {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  imageBytes: Uint8Array;
-}
 
-/**
- * Extracts ONLY actual embedded images (photos, drawings, logos) from a PDF page
- * without copying old English vector text or background text paths.
- */
-async function extractImagesFromPdfPage(
-  page: pdfjsLib.PDFPageProxy,
-  viewport: pdfjsLib.PageViewport
-): Promise<ExtractedPdfImage[]> {
-  const extracted: ExtractedPdfImage[] = [];
-  try {
-    const operatorList = await page.getOperatorList();
-    const fnArray = operatorList.fnArray;
-    const argsArray = operatorList.argsArray;
-
-    let ctmStack: number[][] = [[1, 0, 0, 1, 0, 0]];
-    let currentCtm = [1, 0, 0, 1, 0, 0];
-
-    const multiplyMatrix = (m1: number[], m2: number[]) => [
-      m1[0] * m2[0] + m1[2] * m2[1],
-      m1[1] * m2[0] + m1[3] * m2[1],
-      m1[0] * m2[2] + m1[2] * m2[3],
-      m1[1] * m2[2] + m1[3] * m2[3],
-      m1[0] * m2[4] + m1[2] * m2[5] + m1[4],
-      m1[1] * m2[4] + m1[3] * m2[5] + m1[5],
-    ];
-
-    for (let i = 0; i < fnArray.length; i++) {
-      const fn = fnArray[i];
-      const args = argsArray[i];
-
-      if (fn === pdfjsLib.OPS.save) {
-        ctmStack.push([...currentCtm]);
-      } else if (fn === pdfjsLib.OPS.restore) {
-        if (ctmStack.length > 1) {
-          currentCtm = ctmStack.pop()!;
-        }
-      } else if (fn === pdfjsLib.OPS.transform) {
-        currentCtm = multiplyMatrix(currentCtm, args);
-      } else if (fn === pdfjsLib.OPS.paintImageXObject || fn === pdfjsLib.OPS.paintInlineImageXObject) {
-        const imgName = args[0];
-        let imgObj: any = null;
-
-        try {
-          if (page.objs.has(imgName)) {
-            imgObj = page.objs.get(imgName);
-          } else if (page.commonObjs.has(imgName)) {
-            imgObj = page.commonObjs.get(imgName);
-          }
-        } catch (e) {}
-
-        if (imgObj && imgObj.width && imgObj.height && imgObj.data) {
-          const imgWidth = Math.abs(currentCtm[0]) || imgObj.width;
-          const imgHeight = Math.abs(currentCtm[3]) || imgObj.height;
-          const x = currentCtm[4];
-          const y = currentCtm[5];
-
-          // Ignore tiny noise (< 15x15)
-          if (imgWidth >= 15 && imgHeight >= 15) {
-            const canvas = document.createElement('canvas');
-            canvas.width = imgObj.width;
-            canvas.height = imgObj.height;
-            const ctx = canvas.getContext('2d');
-
-            if (ctx) {
-              const imageData = ctx.createImageData(imgObj.width, imgObj.height);
-              const data = imgObj.data;
-
-              if (data.length === imgObj.width * imgObj.height * 4) {
-                imageData.data.set(data);
-              } else if (data.length === imgObj.width * imgObj.height * 3) {
-                let j = 0;
-                for (let k = 0; k < data.length; k += 3) {
-                  imageData.data[j++] = data[k];
-                  imageData.data[j++] = data[k + 1];
-                  imageData.data[j++] = data[k + 2];
-                  imageData.data[j++] = 255;
-                }
-              }
-
-              ctx.putImageData(imageData, 0, 0);
-
-              const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/png'));
-              if (blob) {
-                const arrayBuffer = await blob.arrayBuffer();
-                extracted.push({
-                  x: Math.max(0, x),
-                  y: Math.max(0, y),
-                  width: Math.min(viewport.width, imgWidth),
-                  height: Math.min(viewport.height, imgHeight),
-                  imageBytes: new Uint8Array(arrayBuffer),
-                });
-              }
-            }
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.warn('Image extraction helper warning:', err);
-  }
-  return extracted;
-}
 
 export async function processPdfFile(
   file: File,
@@ -242,12 +134,13 @@ export async function processPdfFile(
     pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
     const arrayBuffer = await file.arrayBuffer();
-    const pdfjsDoc = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
+    const pdfjsDoc = await pdfjsLib.getDocument({
+      data: arrayBuffer.slice(0),
+      verbosity: 0,
+    }).promise;
     const totalPages = pdfjsDoc.numPages;
 
     const pdfDoc = await PDFDocument.create();
-
-
 
     const sections: DocumentSection[] = [];
     let totalWords = 0;
@@ -268,24 +161,57 @@ export async function processPdfFile(
       const initialPage = pdfDoc.addPage([viewport.width, viewport.height]);
       let currentPage = initialPage;
 
-      // Extract and restore ONLY actual images/illustrations without copying old English text or emojis
-      const pageImages = await extractImagesFromPdfPage(page, viewport);
-      for (const img of pageImages) {
-        try {
-          const embeddedPng = await pdfDoc.embedPng(img.imageBytes);
-          initialPage.drawImage(embeddedPng, {
-            x: img.x,
-            y: img.y,
-            width: img.width,
-            height: img.height,
-          });
-        } catch (e) {
-          console.warn('Could not draw extracted image:', e);
+      // 1. Render complete page background to canvas (scale 1.8) to capture all vector artwork, images, graphics & shapes
+      const renderScale = 1.8;
+      const bgCanvas = document.createElement('canvas');
+      const bgCtx = bgCanvas.getContext('2d');
+      const bgViewport = page.getViewport({ scale: renderScale });
+      bgCanvas.width = bgViewport.width;
+      bgCanvas.height = bgViewport.height;
+
+      const bgRenderTask = (page as any).render({ canvasContext: bgCtx, viewport: bgViewport, canvas: bgCanvas } as any);
+      await bgRenderTask.promise;
+
+      // 2. Erase 100% of original English text & emojis from the canvas background image before embedding
+      const textContent = await page.getTextContent();
+      const textItems = textContent.items as any[];
+
+      if (bgCtx && textItems.length > 0) {
+        bgCtx.fillStyle = '#ffffff';
+        for (const item of textItems) {
+          if (!item.str || !item.str.trim()) continue;
+          const transform = item.transform;
+          const itemX = transform[4] * renderScale;
+          const itemY = (viewport.height - transform[5]) * renderScale;
+          const itemFontSize = (Math.abs(transform[0]) || Math.abs(transform[3]) || 12) * renderScale;
+          const itemWidth = (item.width || item.str.length * itemFontSize * 0.5) * renderScale;
+
+          // Erase exact box of original text on canvas
+          bgCtx.fillRect(
+            Math.max(0, itemX - 4),
+            Math.max(0, itemY - itemFontSize - 3),
+            Math.min(bgCanvas.width - itemX + 4, itemWidth + 8),
+            itemFontSize * 1.45
+          );
         }
       }
 
-    const textContent = await page.getTextContent();
-    const textItems = textContent.items as any[];
+      // 3. Embed cleaned background canvas onto initialPage (Images & Artwork kept 100%, Text erased)
+      try {
+        const imageBlob = await new Promise<Blob | null>(res => bgCanvas.toBlob(res, 'image/jpeg', 0.90));
+        if (imageBlob) {
+          const imageBuffer = await imageBlob.arrayBuffer();
+          const embeddedJpg = await pdfDoc.embedJpg(imageBuffer);
+          initialPage.drawImage(embeddedJpg, {
+            x: 0,
+            y: 0,
+            width: viewport.width,
+            height: viewport.height,
+          });
+        }
+      } catch (err) {
+        console.warn('Canvas background embedding warning:', err);
+      }
 
     if (textItems.length === 0) {
       // Scanned PDF page OCR
@@ -530,8 +456,20 @@ export async function processPdfFile(
           ? rgb(0.45, 0.45, 0.5) 
           : (isLargeHeading ? rgb(0.05, 0.05, 0.15) : rgb(0.12, 0.12, 0.25));
 
-        const maxW = Math.max(40, viewport.width - block.minX - 20);
-        const wrappedLines = smartWrapTextToLines(cleanTextForPdf, fontSize, maxW);
+        // Adjust minX for long headings or text blocks to maximize available width
+        let renderMinX = block.minX;
+        if (isLargeHeading || cleanTextForPdf.length > 25) {
+          renderMinX = Math.min(block.minX, 35);
+        }
+
+        const maxW = Math.max(40, viewport.width - renderMinX - 25);
+        let wrappedLines = smartWrapTextToLines(cleanTextForPdf, fontSize, maxW, isLargeHeading);
+
+        // Auto-scale font size down if any line is still too wide for maxW
+        while (fontSize > 9 && wrappedLines.some(l => l.length * (fontSize * (isLargeHeading ? 0.68 : 0.52)) > maxW)) {
+          fontSize -= 1;
+          wrappedLines = smartWrapTextToLines(cleanTextForPdf, fontSize, maxW, isLargeHeading);
+        }
 
         // Generous line height & spacing gap
         const fontLineHeight = isLargeHeading ? fontSize * 1.55 : fontSize * 1.38;
@@ -579,7 +517,7 @@ export async function processPdfFile(
 
           try {
             currentPage.drawText(wrappedLines[lIdx], {
-              x: Math.max(5, Math.min(viewport.width - 40, block.minX)),
+              x: Math.max(5, Math.min(viewport.width - 40, renderMinX)),
               y: Math.max(5, Math.min(viewport.height - 15, targetY)),
               size: fontSize,
               font: activeFont,
