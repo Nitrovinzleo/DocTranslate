@@ -25,22 +25,25 @@ export function App() {
   const [processedResult, setProcessedResult] = useState<ProcessedDocumentResult | null>(null);
   const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState<boolean>(false);
 
+  // Monotonic progress updater (never jumps backward)
+  const updateProgress = (pct: number, msg: string) => {
+    setProgressPct(prev => Math.max(prev, Math.min(100, Math.round(pct))));
+    if (msg) setStatusMessage(msg);
+  };
+
   const handleStartTranslation = async () => {
     if (!selectedFile) return;
 
     setIsTranslating(true);
     setProgressPct(5);
-    setStatusMessage('Initialisation du processus 100% local...');
+    setStatusMessage('Initialisation du traitement Vercel 100% local...');
     setProcessedResult(null);
 
     const options: TranslationOptions = {
       sourceLang,
       targetLang,
       engineMode,
-      onProgress: (pct, msg) => {
-        setProgressPct(pct);
-        setStatusMessage(msg);
-      }
+      onProgress: updateProgress
     };
 
     try {
@@ -48,11 +51,11 @@ export function App() {
       let result: ProcessedDocumentResult;
 
       if (fileName.endsWith('.docx')) {
-        result = await processDocxFile(selectedFile, options, options.onProgress);
+        result = await processDocxFile(selectedFile, options, updateProgress);
       } else if (fileName.endsWith('.pptx')) {
-        result = await processPptxFile(selectedFile, options, options.onProgress);
+        result = await processPptxFile(selectedFile, options, updateProgress);
       } else if (fileName.endsWith('.pdf')) {
-        result = await processPdfFile(selectedFile, options, options.onProgress);
+        result = await processPdfFile(selectedFile, options, updateProgress);
       } else {
         throw new Error('Format de fichier non pris en charge');
       }
@@ -76,17 +79,14 @@ export function App() {
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 selection:bg-cyan-500 selection:text-slate-950">
       
-      {/* Top Header */}
       <Header
         engineMode={engineMode}
         setEngineMode={setEngineMode}
         onOpenPrivacyModal={() => setIsPrivacyModalOpen(true)}
       />
 
-      {/* Main Container */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-8 space-y-8">
         
-        {/* Privacy Banner */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-2xl bg-emerald-950/40 border border-emerald-800/50 text-emerald-300 text-xs sm:text-sm font-medium shadow-lg backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-emerald-500/20 rounded-xl text-emerald-400 shrink-0">
@@ -107,7 +107,6 @@ export function App() {
           </button>
         </div>
 
-        {/* Hero Title */}
         {!processedResult && !isTranslating && (
           <div className="text-center space-y-3 py-2">
             <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
@@ -119,11 +118,9 @@ export function App() {
           </div>
         )}
 
-        {/* Step-by-step interactive workflow */}
         {!processedResult && !isTranslating && (
           <div className="space-y-8 animate-fadeIn">
             
-            {/* Step 1: Language Selection */}
             <LanguageSelector
               sourceLang={sourceLang}
               targetLang={targetLang}
@@ -132,14 +129,12 @@ export function App() {
               disabled={isTranslating}
             />
 
-            {/* Step 2: Document Dropzone */}
             <DropZone
               onFileSelected={setSelectedFile}
               selectedFile={selectedFile}
               disabled={isTranslating}
             />
 
-            {/* Step 3: Launch Action Card */}
             <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 flex items-center justify-center text-white font-bold text-sm shadow-md">
@@ -173,7 +168,6 @@ export function App() {
               </button>
             </div>
 
-            {/* Features summary */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4">
               <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 text-center space-y-1.5">
                 <div className="w-8 h-8 mx-auto rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center">
@@ -203,7 +197,6 @@ export function App() {
           </div>
         )}
 
-        {/* Translation Progress */}
         {isTranslating && (
           <TranslationProgress
             progress={progressPct}
@@ -211,7 +204,6 @@ export function App() {
           />
         )}
 
-        {/* Completed Document Preview & Download */}
         {processedResult && !isTranslating && (
           <DocumentViewer
             result={processedResult}
@@ -221,7 +213,6 @@ export function App() {
 
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-slate-800/80 py-6 px-4 text-center text-xs text-slate-500">
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -234,7 +225,6 @@ export function App() {
         </div>
       </footer>
 
-      {/* Privacy Guarantee Modal */}
       <PrivacyBadge
         isOpen={isPrivacyModalOpen}
         onClose={() => setIsPrivacyModalOpen(false)}

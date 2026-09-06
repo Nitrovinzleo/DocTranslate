@@ -78,8 +78,10 @@ export async function processPdfFile(
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
   for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-    const currentProgress = Math.round(15 + (pageNum / totalPages) * 75);
-    if (onProgress) onProgress(currentProgress, `Traduction parallélisée de la page PDF ${pageNum}/${totalPages}...`);
+    const pageStartPct = Math.round(15 + ((pageNum - 1) / totalPages) * 75);
+    const pageEndPct = Math.round(15 + (pageNum / totalPages) * 75);
+
+    if (onProgress) onProgress(pageStartPct, `Traduction et superposition de la page PDF ${pageNum}/${totalPages}...`);
 
     const page = await pdfjsDoc.getPage(pageNum);
     const viewport = page.getViewport({ scale: 1.0 });
@@ -105,7 +107,7 @@ export async function processPdfFile(
 
     if (textItems.length === 0) {
       // Scanned PDF page OCR
-      if (onProgress) onProgress(currentProgress, `Page ${pageNum} scannée : Exécution de l'OCR local...`);
+      if (onProgress) onProgress(pageStartPct, `Page ${pageNum} scannée : Exécution de l'OCR local...`);
       ocrImageCount++;
 
       const canvas = document.createElement('canvas');
@@ -120,7 +122,13 @@ export async function processPdfFile(
 
       if (ocrResult.lines && ocrResult.lines.length > 0) {
         const ocrTexts = ocrResult.lines.map(l => l.text.trim()).filter(Boolean);
-        const translatedOcrBatch = await translateTextBatch(ocrTexts, options);
+        const translatedOcrBatch = await translateTextBatch(ocrTexts, {
+          ...options,
+          onProgress: (subPct, msg) => {
+            const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
+            if (onProgress) onProgress(scaled, msg);
+          }
+        });
 
         for (let idx = 0; idx < ocrResult.lines.length; idx++) {
           const line = ocrResult.lines[idx];
@@ -160,11 +168,17 @@ export async function processPdfFile(
         }
       }
     } else {
-      // Vector PDF with text items -> Batch translate all text items on this page simultaneously!
+      // Vector PDF text items
       const validItems = textItems.filter(item => item.str && item.str.trim().length > 0);
       const rawPageTexts = validItems.map(item => item.str);
 
-      const translatedBatch = await translateTextBatch(rawPageTexts, options);
+      const translatedBatch = await translateTextBatch(rawPageTexts, {
+        ...options,
+        onProgress: (subPct, msg) => {
+          const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
+          if (onProgress) onProgress(scaled, msg);
+        }
+      });
 
       for (let i = 0; i < validItems.length; i++) {
         const item = validItems[i];
