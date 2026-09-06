@@ -1,3 +1,5 @@
+import * as pdfjsLib from 'pdfjs-dist';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { translateTextBatch } from './translatorEngine';
 import type { TranslationOptions } from './translatorEngine';
 import { performLocalOCR } from './ocrService';
@@ -51,9 +53,6 @@ export async function processPdfFile(
   onProgress?: (pct: number, stepMessage: string) => void
 ): Promise<ProcessedDocumentResult> {
   if (onProgress) onProgress(10, 'Lecture et analyse du document PDF...');
-
-  const pdfjsLib = await import('pdfjs-dist');
-  const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 

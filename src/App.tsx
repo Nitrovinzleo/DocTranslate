@@ -63,7 +63,13 @@ export function App() {
       setProcessedResult(result);
     } catch (err: any) {
       console.error('Erreur lors de la traduction locale :', err);
-      alert(`Erreur lors du traitement du document : ${err?.message || err}`);
+      const errMsg = String(err?.message || err);
+      if (errMsg.includes('dynamically imported module') || errMsg.includes('Importing a module script failed')) {
+        alert("Une mise à jour vient d'être appliquée sur Vercel. La page va se recharger automatiquement pour utiliser la dernière version.");
+        window.location.reload();
+        return;
+      }
+      alert(`Erreur lors du traitement du document : ${errMsg}`);
     } finally {
       setIsTranslating(false);
     }
