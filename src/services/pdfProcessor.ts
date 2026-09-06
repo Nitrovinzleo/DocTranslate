@@ -91,30 +91,56 @@ function isWatermarkItem(item: any): boolean {
   return false;
 }
 
+/**
+ * Helper to execute PDF parsing operations with internal pdf-lib / pdf.js warning logs silenced.
+ */
+async function withSilencedPdfParserLogs<T>(fn: () => Promise<T>): Promise<T> {
+  const originalWarn = console.warn;
+  console.warn = (...args: any[]) => {
+    const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+    if (
+      msg.includes('Trying to parse invalid object') ||
+      msg.includes('Invalid object ref') ||
+      msg.includes('TT: undefined function') ||
+      msg.includes('ignoreEncryption') ||
+      msg.includes('embedded page')
+    ) {
+      return; // Silently filter out non-fatal PDF parser recovery logs
+    }
+    originalWarn.apply(console, args);
+  };
+  try {
+    return await fn();
+  } finally {
+    console.warn = originalWarn;
+  }
+}
+
 export async function processPdfFile(
   file: File,
   options: TranslationOptions,
   onProgress?: (pct: number, stepMessage: string) => void
 ): Promise<ProcessedDocumentResult> {
-  if (onProgress) onProgress(10, 'Lecture et analyse du document PDF...');
+  return withSilencedPdfParserLogs(async () => {
+    if (onProgress) onProgress(10, 'Lecture et analyse du document PDF...');
 
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
-  const arrayBuffer = await file.arrayBuffer();
-  const pdfjsDoc = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
-  const totalPages = pdfjsDoc.numPages;
+    const arrayBuffer = await file.arrayBuffer();
+    const pdfjsDoc = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
+    const totalPages = pdfjsDoc.numPages;
 
-  const pdfDoc = await PDFDocument.create();
+    const pdfDoc = await PDFDocument.create();
 
-  // Load input PDF with ignoreEncryption: true to support protected/encrypted PDF files cleanly
-  let embeddedPages: any[] = [];
-  try {
-    const srcPdfDoc = await PDFDocument.load(arrayBuffer.slice(0), { ignoreEncryption: true });
-    embeddedPages = await pdfDoc.embedPdf(srcPdfDoc);
-  } catch (_err) {
-    // Non-fatal: If pdf-lib cannot embed vectors due to non-standard indirect PDF objects,
-    // the processor seamlessly falls back to pdf.js text rendering & canvas background.
-  }
+    // Load input PDF with ignoreEncryption: true to support protected/encrypted PDF files cleanly
+    let embeddedPages: any[] = [];
+    try {
+      const srcPdfDoc = await PDFDocument.load(arrayBuffer.slice(0), { ignoreEncryption: true });
+      embeddedPages = await pdfDoc.embedPdf(srcPdfDoc);
+    } catch (_err) {
+      // Non-fatal: If pdf-lib cannot embed vectors due to non-standard indirect PDF objects,
+      // the processor seamlessly falls back to pdf.js text rendering & canvas background.
+    }
 
   const sections: DocumentSection[] = [];
   let totalWords = 0;
@@ -514,4 +540,5 @@ export async function processPdfFile(
       ocrImageCount
     }
   };
+ });
 }
