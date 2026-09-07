@@ -220,9 +220,9 @@ export async function processPdfFile(
         // Scanned PDF page or PDF page with images/screenshots OCR
         if (onProgress) onProgress(pageStartPct, `Page ${pageNum} (Diapositive Image) : Analyse IA Vision & OCR...`);
 
-        // Compute optimal scale so base64 JPEG payload is compact (~120KB) and stays well under Vercel Serverless payload limits
+        // Keep high resolution scale (1.6 ~1600px width) and 0.80 quality so small text and fine print remain 100% sharp
         const unscaledViewport = page.getViewport({ scale: 1.0 });
-        const targetScale = Math.min(1.5, Math.max(0.8, 1280 / (unscaledViewport.width || 1000)));
+        const targetScale = Math.min(1.8, Math.max(1.2, 1600 / (unscaledViewport.width || 1000)));
 
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
@@ -235,7 +235,7 @@ export async function processPdfFile(
 
         let visionTranslatedText = '';
         try {
-          const imageBase64 = canvas.toDataURL('image/jpeg', 0.65);
+          const imageBase64 = canvas.toDataURL('image/jpeg', 0.80);
           const visionRes = await fetch('/api/translate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -283,7 +283,7 @@ export async function processPdfFile(
                   font: fontRegular,
                   color: rgb(0.1, 0.1, 0.2),
                 });
-              } catch (e) {}
+              } catch (e) { }
             }
           }
           continue;
@@ -339,7 +339,7 @@ export async function processPdfFile(
                   font: fontRegular,
                   color: rgb(0.1, 0.1, 0.2),
                 });
-              } catch (e) {}
+              } catch (e) { }
             }
           }
           continue;
@@ -383,7 +383,7 @@ export async function processPdfFile(
                 height: boxH,
                 color: rgb(1, 1, 1),
               });
-            } catch (e) {}
+            } catch (e) { }
 
             for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
               try {
@@ -403,110 +403,86 @@ export async function processPdfFile(
       } else {
         // Vector PDF text items: Group items into horizontal lines (excluding watermarks)
 
-      interface LineItem {
-        str: string;
-        x: number;
-        y: number;
-        fontSize: number;
-        width: number;
-      }
-
-      interface LineGroup {
-        y: number;
-        minX: number;
-        maxX: number;
-        maxFontSize: number;
-        isHeading: boolean;
-        isFooterBrand: boolean;
-        items: LineItem[];
-      }
-
-      const lineGroups: LineGroup[] = [];
-
-      for (const item of validItems) {
-        const str = item.str.trim();
-        if (!str) continue;
-
-        const transform = item.transform;
-        const x = transform[4];
-        const y = transform[5];
-        const fontSize = Math.abs(transform[0]) || Math.abs(transform[3]) || 12;
-        const approxWidth = (item.width || str.length * fontSize * 0.5);
-
-        const isFooterBrand = y <= 45 || y >= viewport.height - 35 || /^gaumont$/i.test(str) || /^\d{1,3}$/.test(str);
-
-        // Group items within 2.5px vertical Y distance (exact same horizontal line)
-        let group = lineGroups.find(g => Math.abs(g.y - y) <= 2.5);
-        if (!group) {
-          group = {
-            y,
-            minX: x,
-            maxX: x + approxWidth,
-            maxFontSize: fontSize,
-            isHeading: !isFooterBrand && (fontSize >= 14 || (str.length < 40 && str === str.toUpperCase() && /^[A-Z\s]{4,}$/.test(str))),
-            isFooterBrand,
-            items: [{ str, x, y, fontSize, width: approxWidth }],
-          };
-          lineGroups.push(group);
-        } else {
-          group.minX = Math.min(group.minX, x);
-          group.maxX = Math.max(group.maxX, x + approxWidth);
-          group.maxFontSize = Math.max(group.maxFontSize, fontSize);
-          if (!isFooterBrand && (fontSize >= 14 || (str.length < 40 && str === str.toUpperCase() && /^[A-Z\s]{4,}$/.test(str)))) {
-            group.isHeading = true;
-          }
-          group.items.push({ str, x, y, fontSize, width: approxWidth });
+        interface LineItem {
+          str: string;
+          x: number;
+          y: number;
+          fontSize: number;
+          width: number;
         }
-      }
 
-      // Sort line groups vertically (top to bottom)
-      lineGroups.sort((a, b) => b.y - a.y);
+        interface LineGroup {
+          y: number;
+          minX: number;
+          maxX: number;
+          maxFontSize: number;
+          isHeading: boolean;
+          isFooterBrand: boolean;
+          items: LineItem[];
+        }
 
-      // Group line groups into Paragraph Blocks for natural context translation
-      interface ParagraphBlock {
-        rawText: string;
-        minX: number;
-        maxX: number;
-        maxFontSize: number;
-        isHeading: boolean;
-        isFooterBrand: boolean;
-        y: number;
-        lineGroups: LineGroup[];
-      }
+        const lineGroups: LineGroup[] = [];
 
-      const paragraphBlocks: ParagraphBlock[] = [];
-      let currentBlock: ParagraphBlock | null = null;
+        for (const item of validItems) {
+          const str = item.str.trim();
+          if (!str) continue;
 
-      for (let i = 0; i < lineGroups.length; i++) {
-        const g = lineGroups[i];
-        g.items.sort((a, b) => a.x - b.x);
-        const lineText = g.items.map(it => it.str).join(' ');
+          const transform = item.transform;
+          const x = transform[4];
+          const y = transform[5];
+          const fontSize = Math.abs(transform[0]) || Math.abs(transform[3]) || 12;
+          const approxWidth = (item.width || str.length * fontSize * 0.5);
 
-        if (!currentBlock) {
-          currentBlock = {
-            rawText: lineText,
-            minX: g.minX,
-            maxX: g.maxX,
-            maxFontSize: g.maxFontSize,
-            isHeading: g.isHeading,
-            isFooterBrand: g.isFooterBrand,
-            y: g.y,
-            lineGroups: [g]
-          };
-          paragraphBlocks.push(currentBlock);
-        } else {
-          const prevGroup = currentBlock.lineGroups[currentBlock.lineGroups.length - 1];
-          const yGap = prevGroup.y - g.y;
-          const sameFontSize = Math.abs(prevGroup.maxFontSize - g.maxFontSize) <= 3;
-          const isSameParagraph = !g.isHeading && !g.isFooterBrand && !currentBlock.isHeading && !currentBlock.isFooterBrand && yGap > 0 && yGap <= prevGroup.maxFontSize * 2.2 && sameFontSize;
+          const isFooterBrand = y <= 45 || y >= viewport.height - 35 || /^gaumont$/i.test(str) || /^\d{1,3}$/.test(str);
 
-          if (isSameParagraph) {
-            currentBlock.rawText += ' ' + lineText;
-            currentBlock.minX = Math.min(currentBlock.minX, g.minX);
-            currentBlock.maxX = Math.max(currentBlock.maxX, g.maxX);
-            currentBlock.maxFontSize = Math.max(currentBlock.maxFontSize, g.maxFontSize);
-            currentBlock.lineGroups.push(g);
+          // Group items within 2.5px vertical Y distance (exact same horizontal line)
+          let group = lineGroups.find(g => Math.abs(g.y - y) <= 2.5);
+          if (!group) {
+            group = {
+              y,
+              minX: x,
+              maxX: x + approxWidth,
+              maxFontSize: fontSize,
+              isHeading: !isFooterBrand && (fontSize >= 14 || (str.length < 40 && str === str.toUpperCase() && /^[A-Z\s]{4,}$/.test(str))),
+              isFooterBrand,
+              items: [{ str, x, y, fontSize, width: approxWidth }],
+            };
+            lineGroups.push(group);
           } else {
+            group.minX = Math.min(group.minX, x);
+            group.maxX = Math.max(group.maxX, x + approxWidth);
+            group.maxFontSize = Math.max(group.maxFontSize, fontSize);
+            if (!isFooterBrand && (fontSize >= 14 || (str.length < 40 && str === str.toUpperCase() && /^[A-Z\s]{4,}$/.test(str)))) {
+              group.isHeading = true;
+            }
+            group.items.push({ str, x, y, fontSize, width: approxWidth });
+          }
+        }
+
+        // Sort line groups vertically (top to bottom)
+        lineGroups.sort((a, b) => b.y - a.y);
+
+        // Group line groups into Paragraph Blocks for natural context translation
+        interface ParagraphBlock {
+          rawText: string;
+          minX: number;
+          maxX: number;
+          maxFontSize: number;
+          isHeading: boolean;
+          isFooterBrand: boolean;
+          y: number;
+          lineGroups: LineGroup[];
+        }
+
+        const paragraphBlocks: ParagraphBlock[] = [];
+        let currentBlock: ParagraphBlock | null = null;
+
+        for (let i = 0; i < lineGroups.length; i++) {
+          const g = lineGroups[i];
+          g.items.sort((a, b) => a.x - b.x);
+          const lineText = g.items.map(it => it.str).join(' ');
+
+          if (!currentBlock) {
             currentBlock = {
               rawText: lineText,
               minX: g.minX,
@@ -518,149 +494,173 @@ export async function processPdfFile(
               lineGroups: [g]
             };
             paragraphBlocks.push(currentBlock);
+          } else {
+            const prevGroup = currentBlock.lineGroups[currentBlock.lineGroups.length - 1];
+            const yGap = prevGroup.y - g.y;
+            const sameFontSize = Math.abs(prevGroup.maxFontSize - g.maxFontSize) <= 3;
+            const isSameParagraph = !g.isHeading && !g.isFooterBrand && !currentBlock.isHeading && !currentBlock.isFooterBrand && yGap > 0 && yGap <= prevGroup.maxFontSize * 2.2 && sameFontSize;
+
+            if (isSameParagraph) {
+              currentBlock.rawText += ' ' + lineText;
+              currentBlock.minX = Math.min(currentBlock.minX, g.minX);
+              currentBlock.maxX = Math.max(currentBlock.maxX, g.maxX);
+              currentBlock.maxFontSize = Math.max(currentBlock.maxFontSize, g.maxFontSize);
+              currentBlock.lineGroups.push(g);
+            } else {
+              currentBlock = {
+                rawText: lineText,
+                minX: g.minX,
+                maxX: g.maxX,
+                maxFontSize: g.maxFontSize,
+                isHeading: g.isHeading,
+                isFooterBrand: g.isFooterBrand,
+                y: g.y,
+                lineGroups: [g]
+              };
+              paragraphBlocks.push(currentBlock);
+            }
           }
         }
-      }
 
-      // Translate paragraph blocks in batch
-      const combinedBlockTexts = paragraphBlocks.map(b => b.rawText);
-      const translatedBatch = await translateTextBatch(combinedBlockTexts, {
-        ...options,
-        onProgress: (subPct, msg) => {
-          const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
-          if (onProgress) onProgress(scaled, msg);
-        }
-      });
-
-      // Track vertical Y cursor to prevent line collisions and handle page overflows cleanly
-      let currentYCursor = viewport.height - 35;
-      const SAFE_BOTTOM_MARGIN = 55;
-
-      for (let i = 0; i < paragraphBlocks.length; i++) {
-        const block = paragraphBlocks[i];
-        const rawBlockText = combinedBlockTexts[i];
-        const translatedBlockText = translatedBatch[i] || rawBlockText;
-
-        totalWords += rawBlockText.split(/\s+/).filter(Boolean).length;
-
-        sections.push({
-          id: `pdf-p${pageNum}-block${i}`,
-          originalText: `[Page ${pageNum}]: ${rawBlockText}`,
-          translatedText: `[Page ${pageNum} Traduit]: ${translatedBlockText}`,
-          type: block.isHeading ? 'heading' : 'paragraph'
+        // Translate paragraph blocks in batch
+        const combinedBlockTexts = paragraphBlocks.map(b => b.rawText);
+        const translatedBatch = await translateTextBatch(combinedBlockTexts, {
+          ...options,
+          onProgress: (subPct, msg) => {
+            const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
+            if (onProgress) onProgress(scaled, msg);
+          }
         });
 
-        const cleanTextForPdf = sanitizeForPdf(translatedBlockText);
-        if (!cleanTextForPdf) continue;
+        // Track vertical Y cursor to prevent line collisions and handle page overflows cleanly
+        let currentYCursor = viewport.height - 35;
+        const SAFE_BOTTOM_MARGIN = 55;
 
-        // Footer watermarks ("Gaumont", page numbers) remain small and discrete
-        let fontSize = Math.max(8, Math.min(22, block.maxFontSize));
-        if (block.isFooterBrand) {
-          fontSize = Math.min(10, fontSize);
-        }
+        for (let i = 0; i < paragraphBlocks.length; i++) {
+          const block = paragraphBlocks[i];
+          const rawBlockText = combinedBlockTexts[i];
+          const translatedBlockText = translatedBatch[i] || rawBlockText;
 
-        const isLargeHeading = block.isHeading && !block.isFooterBrand;
-        const activeFont = isLargeHeading ? fontBold : fontRegular;
-        const fontColor = block.isFooterBrand 
-          ? rgb(0.45, 0.45, 0.5) 
-          : (isLargeHeading ? rgb(0.05, 0.05, 0.15) : rgb(0.12, 0.12, 0.25));
+          totalWords += rawBlockText.split(/\s+/).filter(Boolean).length;
 
-        // Adjust minX for long headings or text blocks to maximize available width
-        let renderMinX = block.minX;
-        if (isLargeHeading || cleanTextForPdf.length > 25) {
-          renderMinX = Math.min(block.minX, 35);
-        }
+          sections.push({
+            id: `pdf-p${pageNum}-block${i}`,
+            originalText: `[Page ${pageNum}]: ${rawBlockText}`,
+            translatedText: `[Page ${pageNum} Traduit]: ${translatedBlockText}`,
+            type: block.isHeading ? 'heading' : 'paragraph'
+          });
 
-        const maxW = Math.max(40, viewport.width - renderMinX - 25);
-        let wrappedLines = smartWrapTextToLines(cleanTextForPdf, fontSize, maxW, isLargeHeading);
+          const cleanTextForPdf = sanitizeForPdf(translatedBlockText);
+          if (!cleanTextForPdf) continue;
 
-        // Auto-scale font size down if any line is still too wide for maxW
-        while (fontSize > 9 && wrappedLines.some(l => l.length * (fontSize * (isLargeHeading ? 0.68 : 0.52)) > maxW)) {
-          fontSize -= 1;
-          wrappedLines = smartWrapTextToLines(cleanTextForPdf, fontSize, maxW, isLargeHeading);
-        }
-
-        // Generous line height & spacing gap
-        const fontLineHeight = isLargeHeading ? fontSize * 1.55 : fontSize * 1.38;
-        const minGapAbove = isLargeHeading ? 14 : 6;
-        const minGapBelow = isLargeHeading ? 14 : 6;
-
-        let lineY = block.y;
-
-        if (!block.isFooterBrand) {
-          const blockHeightNeeded = (fontLineHeight * wrappedLines.length) + minGapAbove + minGapBelow;
-
-          // Check if this block overflows current page bottom margin OR starts below SAFE_BOTTOM_MARGIN
-          if (currentYCursor - blockHeightNeeded < SAFE_BOTTOM_MARGIN || block.y < SAFE_BOTTOM_MARGIN) {
-            // PAGE BREAK: Create a new overflow page cleanly!
-            currentPage = pdfDoc.addPage([viewport.width, viewport.height]);
-            currentYCursor = viewport.height - 35;
+          // Footer watermarks ("Gaumont", page numbers) remain small and discrete
+          let fontSize = Math.max(8, Math.min(22, block.maxFontSize));
+          if (block.isFooterBrand) {
+            fontSize = Math.min(10, fontSize);
           }
 
-          lineY = currentYCursor - minGapAbove;
-        }
+          const isLargeHeading = block.isHeading && !block.isFooterBrand;
+          const activeFont = isLargeHeading ? fontBold : fontRegular;
+          const fontColor = block.isFooterBrand
+            ? rgb(0.45, 0.45, 0.5)
+            : (isLargeHeading ? rgb(0.05, 0.05, 0.15) : rgb(0.12, 0.12, 0.25));
 
-        // Mask original English text with white rectangle on initial page
-        if (!block.isFooterBrand && currentPage === initialPage) {
-          const maskHeight = Math.max(fontLineHeight * wrappedLines.length, 12);
-          const maskY = Math.max(0, lineY - (wrappedLines.length - 1) * fontLineHeight - 1);
-          const maskWidth = Math.min(viewport.width - block.minX, Math.max(block.maxX - block.minX + 4, 30));
-
-          try {
-            currentPage.drawRectangle({
-              x: Math.max(0, block.minX - 2),
-              y: maskY,
-              width: maskWidth,
-              height: maskHeight,
-              color: rgb(1, 1, 1),
-            });
-          } catch (e) {
-            console.warn('PDF erase background rectangle error:', e);
+          // Adjust minX for long headings or text blocks to maximize available width
+          let renderMinX = block.minX;
+          if (isLargeHeading || cleanTextForPdf.length > 25) {
+            renderMinX = Math.min(block.minX, 35);
           }
-        }
 
-        // Render each wrapped line of the block
-        for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
-          const targetY = lineY - (lIdx * fontLineHeight);
+          const maxW = Math.max(40, viewport.width - renderMinX - 25);
+          let wrappedLines = smartWrapTextToLines(cleanTextForPdf, fontSize, maxW, isLargeHeading);
 
-          try {
-            currentPage.drawText(wrappedLines[lIdx], {
-              x: Math.max(5, Math.min(viewport.width - 40, renderMinX)),
-              y: Math.max(5, Math.min(viewport.height - 15, targetY)),
-              size: fontSize,
-              font: activeFont,
-              color: fontColor,
-            });
-          } catch (e) {
-            console.warn('PDF draw line text error:', e);
+          // Auto-scale font size down if any line is still too wide for maxW
+          while (fontSize > 9 && wrappedLines.some(l => l.length * (fontSize * (isLargeHeading ? 0.68 : 0.52)) > maxW)) {
+            fontSize -= 1;
+            wrappedLines = smartWrapTextToLines(cleanTextForPdf, fontSize, maxW, isLargeHeading);
           }
-        }
 
-        if (!block.isFooterBrand) {
-          currentYCursor = lineY - (wrappedLines.length * fontLineHeight) - minGapBelow;
+          // Generous line height & spacing gap
+          const fontLineHeight = isLargeHeading ? fontSize * 1.55 : fontSize * 1.38;
+          const minGapAbove = isLargeHeading ? 14 : 6;
+          const minGapBelow = isLargeHeading ? 14 : 6;
+
+          let lineY = block.y;
+
+          if (!block.isFooterBrand) {
+            const blockHeightNeeded = (fontLineHeight * wrappedLines.length) + minGapAbove + minGapBelow;
+
+            // Check if this block overflows current page bottom margin OR starts below SAFE_BOTTOM_MARGIN
+            if (currentYCursor - blockHeightNeeded < SAFE_BOTTOM_MARGIN || block.y < SAFE_BOTTOM_MARGIN) {
+              // PAGE BREAK: Create a new overflow page cleanly!
+              currentPage = pdfDoc.addPage([viewport.width, viewport.height]);
+              currentYCursor = viewport.height - 35;
+            }
+
+            lineY = currentYCursor - minGapAbove;
+          }
+
+          // Mask original English text with white rectangle on initial page
+          if (!block.isFooterBrand && currentPage === initialPage) {
+            const maskHeight = Math.max(fontLineHeight * wrappedLines.length, 12);
+            const maskY = Math.max(0, lineY - (wrappedLines.length - 1) * fontLineHeight - 1);
+            const maskWidth = Math.min(viewport.width - block.minX, Math.max(block.maxX - block.minX + 4, 30));
+
+            try {
+              currentPage.drawRectangle({
+                x: Math.max(0, block.minX - 2),
+                y: maskY,
+                width: maskWidth,
+                height: maskHeight,
+                color: rgb(1, 1, 1),
+              });
+            } catch (e) {
+              console.warn('PDF erase background rectangle error:', e);
+            }
+          }
+
+          // Render each wrapped line of the block
+          for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
+            const targetY = lineY - (lIdx * fontLineHeight);
+
+            try {
+              currentPage.drawText(wrappedLines[lIdx], {
+                x: Math.max(5, Math.min(viewport.width - 40, renderMinX)),
+                y: Math.max(5, Math.min(viewport.height - 15, targetY)),
+                size: fontSize,
+                font: activeFont,
+                color: fontColor,
+              });
+            } catch (e) {
+              console.warn('PDF draw line text error:', e);
+            }
+          }
+
+          if (!block.isFooterBrand) {
+            currentYCursor = lineY - (wrappedLines.length * fontLineHeight) - minGapBelow;
+          }
         }
       }
     }
-  }
 
-  if (onProgress) onProgress(95, 'Génération du nouveau document PDF traduit...');
+    if (onProgress) onProgress(95, 'Génération du nouveau document PDF traduit...');
 
-  const pdfBytes = await pdfDoc.save();
-  const blobBuffer = new Uint8Array(pdfBytes);
-  const translatedBlob = new Blob([blobBuffer], { type: 'application/pdf' });
+    const pdfBytes = await pdfDoc.save();
+    const blobBuffer = new Uint8Array(pdfBytes);
+    const translatedBlob = new Blob([blobBuffer], { type: 'application/pdf' });
 
-  if (onProgress) onProgress(100, 'Traduction du PDF terminée avec succès !');
+    if (onProgress) onProgress(100, 'Traduction du PDF terminée avec succès !');
 
-  return {
-    fileName: file.name.replace(/\.pdf$/i, `_traduit_${options.targetLang}.pdf`),
-    fileType: 'pdf',
-    sections,
-    translatedBlob,
-    stats: {
-      totalWords,
-      translatedWords: totalWords,
-      ocrImageCount
-    }
-  };
- });
+    return {
+      fileName: file.name.replace(/\.pdf$/i, `_traduit_${options.targetLang}.pdf`),
+      fileType: 'pdf',
+      sections,
+      translatedBlob,
+      stats: {
+        totalWords,
+        translatedWords: totalWords,
+        ocrImageCount
+      }
+    };
+  });
 }

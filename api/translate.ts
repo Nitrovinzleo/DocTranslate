@@ -83,6 +83,9 @@ export default async function handler(req: Request) {
               'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
             },
           });
+        } else {
+          const errText = await geminiRes.text();
+          console.error('Gemini Vision API Error Status:', geminiRes.status, errText);
         }
       } catch (e) {
         console.warn('Gemini Vision Image Translation fallback:', e);

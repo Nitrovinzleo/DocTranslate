@@ -295,9 +295,6 @@ export async function translateTextBatch(
 
           for (let k = 0; k < chunkTexts.length; k++) {
             let rawTrans = translatedArray[k] || chunkTexts[k];
-            if (rawTrans === protectedChunk[k].protectedText) {
-              rawTrans = fastRuleTranslate(protectedChunk[k].protectedText, sourceLang, targetLang);
-            }
             const processed = applyDomainPostProcessing(rawTrans, sourceLang, targetLang);
             results[chunkIndices[k]] = processed;
             translationCache[`serverless-ai:${sourceLang}:${targetLang}:${chunkTexts[k]}`] = processed;
@@ -400,8 +397,8 @@ export async function translateTextBatch(
         // fallback
       }
 
-      if (!trans || trans === rawText) {
-        trans = fastRuleTranslate(rawText, sourceLang, targetLang);
+      if (!trans) {
+        trans = rawText;
       }
 
       const processed = applyDomainPostProcessing(trans, sourceLang, targetLang);
