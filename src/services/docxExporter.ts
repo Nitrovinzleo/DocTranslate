@@ -15,8 +15,21 @@ function escapeXml(unsafe: string): string {
 }
 
 /**
- * Generates a clean Word document (.docx) containing only translated text,
- * explicitly stripping out any images, vector artwork, or image OCR artifacts.
+ * Clean original/translated text prefix labels for Word document export.
+ */
+function formatSectionText(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/^\[Page \d+ OCR Traduit\]:\s*/i, '')
+    .replace(/^\[Diapositive \d+ - Image OCR Traduit\]:\s*/i, '')
+    .replace(/^\[Image (?:Diapositive|PowerPoint|Word)? OCR Traduit\]:\s*/i, '')
+    .replace(/^\[.*?\]:\s*/i, '')
+    .trim();
+}
+
+/**
+ * Generates a clean Word document (.docx) containing all translated text
+ * (both standard text and OCR-extracted text from screenshots/images).
  */
 export async function generateTextOnlyDocxBlob(
   sections: DocumentSection[]
@@ -69,18 +82,28 @@ export async function generateTextOnlyDocxBlob(
       <w:color w:val="1F4E79"/>
     </w:rPr>
   </w:style>
+  <w:style w:type="paragraph" w:styleId="OcrHeading">
+    <w:name w:val="OCR Section Heading"/>
+    <w:rPr>
+      <w:b/>
+      <w:sz w:val="26"/>
+      <w:szCs w:val="26"/>
+      <w:color w:val="0F766E"/>
+    </w:rPr>
+  </w:style>
 </w:styles>`;
   zip.file('word/styles.xml', stylesXml);
 
-  // 5. Build word/document.xml from text sections (ignoring all image-ocr)
-  const textSections = sections.filter(
-    sec => sec.type !== 'image-ocr' && sec.translatedText && sec.translatedText.trim()
+  // 5. Build word/document.xml from ALL sections (including image-ocr)
+  const validSections = sections.filter(
+    sec => sec.translatedText && sec.translatedText.trim()
   );
 
   let paragraphsXml = '';
 
-  for (const sec of textSections) {
-    const cleanText = sec.translatedText.trim();
+  for (const sec of validSections) {
+    const rawTranslated = sec.translatedText.trim();
+    const cleanText = formatSectionText(rawTranslated);
     if (!cleanText) continue;
 
     // Support multiline text blocks
@@ -95,6 +118,13 @@ export async function generateTextOnlyDocxBlob(
 
     if (sec.type === 'heading') {
       paragraphsXml += `<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:spacing w:before="240" w:after="120"/></w:pPr>${runsXml}</w:p>`;
+    } else if (sec.type === 'image-ocr') {
+      // Clean OCR section block in Word
+      const tagMatch = rawTranslated.match(/^\[(.*?)\]:/);
+      const tagText = tagMatch ? tagMatch[1] : 'Texte OCR Extrait';
+      const escapedTag = escapeXml(tagText);
+      paragraphsXml += `<w:p><w:pPr><w:pStyle w:val="OcrHeading"/><w:spacing w:before="180" w:after="60"/></w:pPr><w:r><w:t xml:space="preserve">📌 ${escapedTag}</w:t></w:r></w:p>`;
+      paragraphsXml += `<w:p><w:pPr><w:spacing w:after="140" w:line="276" w:lineRule="auto"/></w:pPr>${runsXml}</w:p>`;
     } else {
       paragraphsXml += `<w:p><w:pPr><w:spacing w:after="140" w:line="276" w:lineRule="auto"/></w:pPr>${runsXml}</w:p>`;
     }
@@ -122,3 +152,4 @@ export async function generateTextOnlyDocxBlob(
     mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
   });
 }
+

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Edit3, Check, RefreshCw, FileText, Image, ShieldCheck, FileDown, ImageOff } from 'lucide-react';
+import { Download, Edit3, Check, RefreshCw, FileText, Image, ShieldCheck, FileDown } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import type { ProcessedDocumentResult, DocumentSection } from '../services/docxProcessor';
 import { generateTextOnlyDocxBlob } from '../services/docxExporter';
@@ -116,12 +116,11 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
           <button
             onClick={handleDownloadDocxTextOnly}
             disabled={isExportingDocx}
-            title="Exporte le texte traduit dans un fichier Word (.docx) sans aucune image"
-            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl bg-indigo-900/80 hover:bg-indigo-800 border border-indigo-600/60 text-indigo-100 text-xs font-extrabold shadow-md transition-all hover:scale-[1.02] active:scale-[0.98] shrink-0 whitespace-nowrap cursor-pointer"
+            title="Télécharge tout le texte extrait et traduit dans un document Word (.docx) propre"
+            className="w-full sm:w-auto flex items-center justify-center gap-2.5 px-5 py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs sm:text-sm font-extrabold shadow-lg shadow-blue-500/20 transition-all hover:scale-[1.02] active:scale-[0.98] shrink-0 whitespace-nowrap cursor-pointer"
           >
-            <FileDown className="w-4 h-4 text-blue-400 shrink-0" />
-            <span>{isExportingDocx ? 'Génération Word...' : 'Exporter en Word (Texte seul)'}</span>
-            <ImageOff className="w-3.5 h-3.5 text-indigo-300" />
+            <FileDown className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
+            <span>{isExportingDocx ? 'Génération Word...' : 'Télécharger en Word (.docx)'}</span>
           </button>
 
           <button
@@ -129,7 +128,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
             className="w-full sm:w-auto flex items-center justify-center gap-2.5 px-5 sm:px-6 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white text-xs sm:text-sm font-extrabold shadow-lg shadow-emerald-500/25 transition-all hover:scale-[1.02] active:scale-[0.98] shrink-0 whitespace-nowrap cursor-pointer"
           >
             <Download className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
-            <span>Télécharger le document traduit</span>
+            <span>Télécharger le {result.fileType.toUpperCase()} traduit</span>
           </button>
         </div>
 

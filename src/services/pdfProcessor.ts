@@ -215,7 +215,7 @@ export async function processPdfFile(
       const validItems = textItems.filter(item => item.str && item.str.trim().length > 0 && !isWatermarkItem(item));
       const totalValidChars = validItems.reduce((acc, item) => acc + item.str.trim().length, 0);
 
-      const isImageOrScannedPage = validItems.length === 0 || (totalValidChars < 15 && !options.ignoreImages);
+      const isImageOrScannedPage = validItems.length === 0 || (totalValidChars < 250 && !options.ignoreImages);
 
       if (isImageOrScannedPage) {
         if (options.ignoreImages) {
