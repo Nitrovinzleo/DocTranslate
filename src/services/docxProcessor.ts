@@ -19,6 +19,7 @@ export interface ProcessedDocumentResult {
     totalWords: number;
     translatedWords: number;
     ocrImageCount: number;
+    processingTimeMs?: number;
   };
 }
 

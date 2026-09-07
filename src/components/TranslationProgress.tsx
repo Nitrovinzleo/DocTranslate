@@ -1,5 +1,5 @@
-import React from 'react';
-import { Loader2, Cpu, CheckCircle2, ShieldCheck } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Loader2, Cpu, ShieldCheck, Timer, CheckCircle2 } from 'lucide-react';
 
 interface TranslationProgressProps {
   progress: number;
@@ -10,6 +10,18 @@ export const TranslationProgress: React.FC<TranslationProgressProps> = ({
   progress,
   statusMessage,
 }) => {
+  const [elapsedMs, setElapsedMs] = useState(0);
+
+  useEffect(() => {
+    const startTime = Date.now();
+    const timer = setInterval(() => {
+      setElapsedMs(Date.now() - startTime);
+    }, 100);
+    return () => clearInterval(timer);
+  }, []);
+
+  const seconds = (elapsedMs / 1000).toFixed(1);
+
   return (
     <div className="w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl animate-fadeIn">
       
@@ -29,7 +41,12 @@ export const TranslationProgress: React.FC<TranslationProgressProps> = ({
           </div>
         </div>
 
-        <div className="text-right">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-cyan-950/80 border border-cyan-800/80 text-cyan-300 text-sm font-mono font-bold shadow-lg shadow-cyan-900/30 animate-pulse">
+            <Timer className="w-4 h-4 text-cyan-400 animate-spin" />
+            <span>{seconds}s</span>
+          </div>
+
           <span className="text-3xl font-extrabold bg-gradient-to-r from-cyan-400 via-indigo-400 to-purple-400 bg-clip-text text-transparent">
             {progress}%
           </span>

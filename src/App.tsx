@@ -48,6 +48,8 @@ export function App() {
       onProgress: updateProgress
     };
 
+    const startTime = Date.now();
+
     try {
       const fileName = selectedFile.name.toLowerCase();
       let result: ProcessedDocumentResult;
@@ -60,6 +62,10 @@ export function App() {
         result = await processPdfFile(selectedFile, options, updateProgress);
       } else {
         throw new Error('Format de fichier non pris en charge');
+      }
+
+      if (result && result.stats) {
+        result.stats.processingTimeMs = Date.now() - startTime;
       }
 
       setProcessedResult(result);
