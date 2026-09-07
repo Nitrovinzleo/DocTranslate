@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Download, Edit3, Check, RefreshCw, FileText, Image, ShieldCheck, FileDown, Copy, CheckCheck, Layers } from 'lucide-react';
+import { Download, Edit3, Check, RefreshCw, FileText, ShieldCheck, FileDown, Copy, CheckCheck, Layers, Sparkles } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import type { ProcessedDocumentResult, DocumentSection } from '../services/docxProcessor';
 import { generateTextOnlyDocxBlob } from '../services/docxExporter';
@@ -169,8 +169,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
               <>
                 <span>•</span>
                 <span className="text-purple-400 flex items-center gap-1 font-semibold">
-                  <Image className="w-3.5 h-3.5" />
-                  <strong>{result.stats.ocrImageCount}</strong> image(s) OCR traduite(s)
+                  <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                  <strong>{result.stats.ocrImageCount}</strong> diapositive(s) Gemini Vision
                 </span>
               </>
             )}
