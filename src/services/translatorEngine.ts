@@ -262,7 +262,7 @@ export async function translateTextBatch(
     return results;
   }
 
-  const CHUNK_SIZE = 4;
+  const CHUNK_SIZE = 35;
   const numChunks = Math.ceil(uncachedTexts.length / CHUNK_SIZE);
 
   for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
@@ -286,7 +286,7 @@ export async function translateTextBatch(
             sourceLang,
             targetLang,
           }),
-          signal: AbortSignal.timeout(10000)
+          signal: AbortSignal.timeout(14000)
         });
 
         if (res.ok) {

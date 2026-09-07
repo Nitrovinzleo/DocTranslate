@@ -194,7 +194,7 @@ ${JSON.stringify(inputTexts)}`;
               responseMimeType: 'application/json'
             }
           }),
-          signal: AbortSignal.timeout(6000)
+          signal: AbortSignal.timeout(12000)
         });
 
         if (geminiRes.ok) {
