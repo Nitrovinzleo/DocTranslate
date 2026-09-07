@@ -160,9 +160,10 @@ export async function processPdfFile(
   return withSilencedPdfParserLogs(async () => {
     if (onProgress) onProgress(10, 'Lecture et préparation du document PDF...');
 
-    // 1. Direct Whole PDF Document Translation via Gemini 1.5 Flash (No image rendering or local OCR needed)
-    try {
-      if (onProgress) onProgress(25, 'Envoi du document PDF complet à l\'IA Gemini 1.5 Flash...');
+    // 1. Direct Whole PDF Document Translation via Gemini 1.5 Flash (for files <= 3.5MB to fit Vercel payload limits)
+    if (file.size <= 3.5 * 1024 * 1024) {
+      try {
+        if (onProgress) onProgress(25, 'Envoi du document PDF complet à l\'IA Gemini 1.5 Flash...');
       const arrayBuffer = await file.arrayBuffer();
       const base64Bytes = new Uint8Array(arrayBuffer);
       let binary = '';
@@ -256,6 +257,7 @@ export async function processPdfFile(
     } catch (directErr) {
       console.warn('Direct PDF Gemini call fallback:', directErr);
     }
+  }
 
     pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl || `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
 
