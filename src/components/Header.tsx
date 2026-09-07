@@ -82,6 +82,28 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           <button
+            onClick={() => {
+              const currentKey = localStorage.getItem('gemini_api_key') || '';
+              const key = prompt('Entrez votre clé API Google Gemini (gratuite sur aistudio.google.com/app/apikey) :', currentKey);
+              if (key !== null) {
+                if (key.trim()) {
+                  localStorage.setItem('gemini_api_key', key.trim());
+                  alert('✨ Clé Gemini enregistrée avec succès ! Le site fonctionnera en connexion directe ultra-rapide.');
+                } else {
+                  localStorage.removeItem('gemini_api_key');
+                  alert('Clé supprimée. Le site utilisera le serveur par défaut.');
+                }
+                window.location.reload();
+              }
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-950/60 border border-purple-800/60 text-purple-300 hover:bg-purple-900/60 text-xs font-semibold transition-all hover:scale-105 shadow-sm cursor-pointer"
+            title="Configurez votre clé Gemini personnelle pour une vitesse directe instantanée"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+            <span>{typeof window !== 'undefined' && localStorage.getItem('gemini_api_key') ? 'Clé Gemini Active ✨' : 'Clé API Gemini'}</span>
+          </button>
+
+          <button
             onClick={onOpenPrivacyModal}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-950/60 border border-emerald-800/60 text-emerald-400 hover:bg-emerald-900/60 text-xs font-semibold transition-all hover:scale-105 shadow-sm"
           >
