@@ -158,7 +158,91 @@ export async function processPdfFile(
   onProgress?: (pct: number, stepMessage: string) => void
 ): Promise<ProcessedDocumentResult> {
   return withSilencedPdfParserLogs(async () => {
-    if (onProgress) onProgress(10, 'Lecture et analyse du document PDF...');
+    if (onProgress) onProgress(15, 'Transmission directe du document PDF à l\'IA Gemini 1.5 Flash...');
+
+    // 1. High-Speed Direct Whole PDF Document Translation via Gemini 1.5 Flash API
+    try {
+      const fileBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(fileBuffer);
+      let binaryStr = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binaryStr += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize) as any);
+      }
+      const pdfBase64 = btoa(binaryStr);
+
+      const directRes = await fetch('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pdfBase64,
+          sourceLang: options.sourceLang,
+          targetLang: options.targetLang,
+        }),
+        signal: AbortSignal.timeout(25000)
+      });
+
+      if (directRes.ok) {
+        const directData = await directRes.json();
+        const fullDocText = directData.fullDocumentText || directData.translatedText;
+        if (fullDocText && fullDocText.trim()) {
+          if (onProgress) onProgress(100, 'Traduction intégrale Gemini terminée avec succès !');
+
+          // Parse fullDocText page blocks into structured sections
+          const sections: DocumentSection[] = [];
+          const pageBlocks = fullDocText.split(/(?=📌\s*Page\s*\d+|Page\s*\d+\s*:)/i).filter(Boolean);
+
+          let totalWords = 0;
+          for (let pIdx = 0; pIdx < pageBlocks.length; pIdx++) {
+            const blockText = pageBlocks[pIdx].trim();
+            if (!blockText) continue;
+            totalWords += blockText.split(/\s+/).filter(Boolean).length;
+            sections.push({
+              id: `pdf-gemini-p${pIdx + 1}`,
+              originalText: `[Page ${pIdx + 1} Document]`,
+              translatedText: blockText,
+              type: 'paragraph'
+            });
+          }
+
+          if (sections.length === 0) {
+            totalWords = fullDocText.split(/\s+/).filter(Boolean).length;
+            sections.push({
+              id: 'pdf-gemini-full',
+              originalText: '[Document PDF Complet]',
+              translatedText: fullDocText.trim(),
+              type: 'paragraph'
+            });
+          }
+
+          const pdfDoc = await PDFDocument.create();
+          const page = pdfDoc.addPage([595, 842]);
+          const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+          page.drawText(sanitizeForPdf(fullDocText.substring(0, 1500)), {
+            x: 40,
+            y: 800,
+            size: 11,
+            font,
+            color: rgb(0.1, 0.1, 0.2),
+          });
+          const pdfBytes = await pdfDoc.save();
+
+          return {
+            fileName: file.name.replace(/\.pdf$/i, `_traduit_${options.targetLang}.pdf`),
+            fileType: 'pdf',
+            sections,
+            translatedBlob: new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' }),
+            stats: {
+              totalWords,
+              translatedWords: totalWords,
+              ocrImageCount: pageBlocks.length
+            }
+          };
+        }
+      }
+    } catch (directErr) {
+      console.warn('Direct Gemini PDF processing error, falling back to page-by-page vision:', directErr);
+    }
 
     pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl || `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
 

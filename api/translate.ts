@@ -42,8 +42,65 @@ export default async function handler(req: Request) {
     const sourceLang = body.sourceLang || 'en';
     const targetLang = body.targetLang || 'fr';
     const imageBase64 = body.imageBase64;
+    const pdfBase64 = body.pdfBase64;
 
     const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+
+    // Handle direct whole PDF document translation via Gemini 1.5 Flash (Instant full document processing)
+    if (pdfBase64 && apiKey) {
+      try {
+        const cleanPdfBase64 = pdfBase64.replace(/^data:application\/pdf;base64,/, '');
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+        const prompt = `You are a world-class document and presentation translator.
+Read this complete presentation PDF document carefully page by page.
+
+MANDATORY TRANSLATION RULES:
+1. Extract and translate ALL title headings, subtitles, bullet points, and body text page by page.
+2. Structure your output clearly page by page (e.g. "📌 Page 1 : [Titre]", "📌 Page 2 : [Titre]", ...).
+3. ABSOLUTELY IGNORE and REMOVE all background watermarks, email stamps, dates (e.g. coralie.boitrelle-laigle@gulli.fr), logo brand text (e.g. Mojang, 9 Story, Brown Bag), footer notices (e.g. Microsoft Confidential), and random symbols.
+4. DO NOT output any garbled symbols, logo artifacts, or OCR noise.
+5. Return ONLY clean, fluent, beautifully formatted French text with titles in bold/uppercase and natural paragraph spacing.`;
+
+        const geminiRes = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { inlineData: { mimeType: 'application/pdf', data: cleanPdfBase64 } },
+                { text: prompt }
+              ]
+            }],
+            generationConfig: {
+              temperature: 0.1,
+            }
+          }),
+          signal: AbortSignal.timeout(28000)
+        });
+
+        if (geminiRes.ok) {
+          const geminiData = await geminiRes.json();
+          const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          if (rawText.trim()) {
+            const processed = applyDomainPostProcessing(rawText.trim(), sourceLang, targetLang);
+            return new Response(JSON.stringify({
+              translatedText: processed,
+              fullDocumentText: processed
+            }), {
+              status: 200,
+              headers: {
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+              },
+            });
+          }
+        } else {
+          console.warn('Gemini Direct PDF error:', geminiRes.status, await geminiRes.text());
+        }
+      } catch (e) {
+        console.warn('Direct Gemini PDF Translation Error:', e);
+      }
+    }
 
     // Handle multimodal slide/image OCR & translation via Gemini 1.5 Flash Vision
     if (imageBase64 && apiKey) {
