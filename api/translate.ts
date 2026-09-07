@@ -1,6 +1,5 @@
 export const config = {
-  runtime: 'edge',
-  regions: ['cdg1'],
+  maxDuration: 15,
 };
 
 function applyDomainPostProcessing(text: string, src: string, tgt: string): string {

@@ -220,10 +220,13 @@ export async function processPdfFile(
         // Scanned PDF page or PDF page with images/screenshots OCR
         if (onProgress) onProgress(pageStartPct, `Page ${pageNum} (Diapositive Image) : Analyse IA Vision & OCR...`);
 
-        const ocrScale = 1.8;
+        // Compute optimal scale so base64 JPEG payload is compact (~120KB) and stays well under Vercel Serverless payload limits
+        const unscaledViewport = page.getViewport({ scale: 1.0 });
+        const targetScale = Math.min(1.5, Math.max(0.8, 1280 / (unscaledViewport.width || 1000)));
+
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        const ocrViewport = page.getViewport({ scale: ocrScale });
+        const ocrViewport = page.getViewport({ scale: targetScale });
         canvas.width = ocrViewport.width;
         canvas.height = ocrViewport.height;
 
@@ -232,7 +235,7 @@ export async function processPdfFile(
 
         let visionTranslatedText = '';
         try {
-          const imageBase64 = canvas.toDataURL('image/jpeg', 0.82);
+          const imageBase64 = canvas.toDataURL('image/jpeg', 0.65);
           const visionRes = await fetch('/api/translate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -351,10 +354,10 @@ export async function processPdfFile(
           totalWords += originalText.split(/\s+/).filter(Boolean).length;
 
           // Convert pixel coordinates back to PDF points
-          const pdfX0 = line.bbox.x0 / ocrScale;
-          const pdfY0 = line.bbox.y0 / ocrScale;
-          const pdfX1 = line.bbox.x1 / ocrScale;
-          const pdfY1 = line.bbox.y1 / ocrScale;
+          const pdfX0 = line.bbox.x0 / targetScale;
+          const pdfY0 = line.bbox.y0 / targetScale;
+          const pdfX1 = line.bbox.x1 / targetScale;
+          const pdfY1 = line.bbox.y1 / targetScale;
 
           sections.push({
             id: `pdf-ocr-${pageNum}-${idx}`,
