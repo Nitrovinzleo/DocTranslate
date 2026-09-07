@@ -81,13 +81,9 @@ function isWatermarkItem(item: any): boolean {
   const watermarkRegex = /^(gaumont|watermark|draft|brouillon|confidentiel|confidential|do not copy|specimen|sample|copie|privé|private)$/i;
   if (watermarkRegex.test(str)) return true;
 
-  // 2. Rotated / Skewed text detection (diagonal watermark in PDF transform matrix)
-  if (item.transform && Array.isArray(item.transform)) {
-    const skewY = Math.abs(item.transform[1] || 0);
-    const skewX = Math.abs(item.transform[2] || 0);
-    if (skewY > 0.05 || skewX > 0.05) {
-      return true; // Rotated diagonal watermark
-    }
+  // 2. Specific watermark email / stamp patterns (e.g. coralie.boitrelle-laigle@gulli.fr 22/07/2026)
+  if (/@gulli\.fr/i.test(str) || /^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
+    return true;
   }
 
   return false;
