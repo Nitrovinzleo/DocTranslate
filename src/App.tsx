@@ -120,9 +120,6 @@ export function App() {
             <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
               Studio de Traduction de Documents <span className="bg-gradient-to-r from-cyan-400 via-indigo-400 to-purple-400 bg-clip-text text-transparent">Confidentiel 100% Local</span>
             </h2>
-            <p className="text-sm text-slate-400 max-w-2xl mx-auto leading-relaxed">
-              Traduisez intégralement vos fichiers <strong className="text-slate-200">PDF</strong>, <strong className="text-slate-200">Word (.docx)</strong> et <strong className="text-slate-200">PowerPoint (.pptx)</strong> en préservant fidèlement la mise en page, les styles et le texte des images (OCR).
-            </p>
           </div>
         )}
 
