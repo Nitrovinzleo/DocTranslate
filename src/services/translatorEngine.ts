@@ -229,6 +229,55 @@ async function getBrowserWasmPipeline(src: string, tgt: string, onProgress?: (pe
   return loadingPromises[key];
 }
 
+async function callBrowserGeminiDirect(texts: string[], sourceLang: string, targetLang: string, apiKey: string): Promise<string[] | null> {
+  const endpointCandidates = [
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+    'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent',
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent'
+  ];
+
+  const prompt = `You are a world-class literary translator. Translate the following array of text strings from ${sourceLang} to ${targetLang}.
+Maintain literary tone, humor, context, and proper idioms (e.g. 'DIARY OF A BRAT' -> "JOURNAL D'UNE PESTE").
+Input strings: ${JSON.stringify(texts)}`;
+
+  const payload = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.1,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'ARRAY',
+        items: { type: 'STRING' }
+      }
+    }
+  };
+
+  for (const baseUrl of endpointCandidates) {
+    try {
+      const res = await fetch(`${baseUrl}?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(12000)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const rawResponseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (rawResponseText) {
+          const parsed = JSON.parse(rawResponseText);
+          if (Array.isArray(parsed) && parsed.length === texts.length) {
+            return parsed;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Browser direct Gemini fetch error:', e);
+    }
+  }
+  return null;
+}
+
 export async function translateTextBatch(
   texts: string[],
   options: TranslationOptions
@@ -274,8 +323,23 @@ export async function translateTextBatch(
 
     const protectedChunk = chunkTexts.map(t => protectProperNouns(normalizeQuotes(t)));
 
-    // Mode 1: Serveur Confidentiel Vercel / Fast API (Serverless)
+    // Mode 1: Serveur Confidentiel Vercel / Direct Browser Gemini API
     if (engineMode === 'serverless-ai') {
+      const browserApiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || (typeof window !== 'undefined' && window.localStorage?.getItem('gemini_api_key'));
+      if (browserApiKey) {
+        if (onProgress) onProgress(currentProgress, `Connexion Directe Gemini IA (Navigateur -> Google)...`);
+        const directResults = await callBrowserGeminiDirect(protectedChunk.map(p => p.protectedText), sourceLang, targetLang, browserApiKey);
+        if (directResults) {
+          for (let k = 0; k < chunkTexts.length; k++) {
+            let rawTrans = directResults[k] || chunkTexts[k];
+            const processed = applyDomainPostProcessing(rawTrans, sourceLang, targetLang);
+            results[chunkIndices[k]] = processed;
+            translationCache[`serverless-ai:${sourceLang}:${targetLang}:${chunkTexts[k]}`] = processed;
+          }
+          continue;
+        }
+      }
+
       if (onProgress) onProgress(currentProgress, `Serveur Confidentiel (Lot ${chunkIdx + 1}/${numChunks})...`);
       try {
         const res = await fetch('/api/translate', {
