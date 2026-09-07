@@ -191,8 +191,8 @@ export async function processPptxFile(
 
         sections.push({
           id: `slide-${slideNum}-p${i}`,
-          originalText: fullText,
-          translatedText,
+          originalText: `[Diapositive ${slideNum}]: ${fullText}`,
+          translatedText: `[Diapositive ${slideNum} Traduit]: ${translatedText}`,
           type: 'paragraph'
         });
       }

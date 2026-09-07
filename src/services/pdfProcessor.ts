@@ -454,8 +454,8 @@ export async function processPdfFile(
 
         sections.push({
           id: `pdf-p${pageNum}-block${i}`,
-          originalText: rawBlockText,
-          translatedText: translatedBlockText,
+          originalText: `[Page ${pageNum}]: ${rawBlockText}`,
+          translatedText: `[Page ${pageNum} Traduit]: ${translatedBlockText}`,
           type: block.isHeading ? 'heading' : 'paragraph'
         });
 

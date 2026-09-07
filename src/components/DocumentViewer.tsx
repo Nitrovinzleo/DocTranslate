@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Download, Edit3, Check, RefreshCw, FileText, Image, ShieldCheck, FileDown, Copy, CheckCheck, Layers } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import type { ProcessedDocumentResult, DocumentSection } from '../services/docxProcessor';
@@ -17,33 +17,48 @@ interface PageGroup {
 function cleanPrefix(text: string): string {
   if (!text) return '';
   return text
-    .replace(/^\[Page \d+ (?:OCR|OCR Traduit)\]:\s*/i, '')
+    .replace(/^\[Page \d+ (?:OCR|OCR Traduit|Traduit)\]:\s*/i, '')
     .replace(/^\[Diapositive \d+ - Image OCR(?: Traduit)?\]:\s*/i, '')
+    .replace(/^\[Diapositive \d+(?: Traduit)?\]:\s*/i, '')
     .replace(/^\[Image (?:Diapositive|PowerPoint|Word)? OCR(?: Traduit)?\]:\s*/i, '')
     .replace(/^\[.*?\]:\s*/i, '')
     .trim();
 }
 
 function groupSectionsByPage(sections: DocumentSection[]): PageGroup[] {
-  const groups: PageGroup[] = [];
-  let currentLabel = '';
-  let currentGroup: PageGroup | null = null;
+  const groupsMap = new Map<string, DocumentSection[]>();
 
   for (const sec of sections) {
     const raw = sec.originalText || sec.translatedText || '';
-    const match = raw.match(/^(?:\[)?(Page \d+|Diapositive \d+|Slide \d+)/i);
-    const label = match ? match[1] : 'Page 1';
+    let label = 'Page 1';
 
-    if (!currentGroup || currentLabel !== label) {
-      if (currentGroup) groups.push(currentGroup);
-      currentLabel = label;
-      currentGroup = { pageLabel: label, sections: [sec] };
+    const textMatch = raw.match(/^\[(Page \d+|Diapositive \d+|Slide \d+)/i);
+    if (textMatch) {
+      label = textMatch[1];
     } else {
-      currentGroup.sections.push(sec);
+      const idMatch = (sec.id || '').match(/^(?:pdf-p|pdf-ocr-|slide-)(\d+)/i);
+      if (idMatch) {
+        label = (sec.id || '').startsWith('slide') ? `Diapositive ${idMatch[1]}` : `Page ${idMatch[1]}`;
+      }
     }
+
+    if (!groupsMap.has(label)) {
+      groupsMap.set(label, []);
+    }
+    groupsMap.get(label)!.push(sec);
   }
 
-  if (currentGroup) groups.push(currentGroup);
+  const groups: PageGroup[] = [];
+  for (const [pageLabel, pageSections] of groupsMap.entries()) {
+    groups.push({ pageLabel, sections: pageSections });
+  }
+
+  groups.sort((a, b) => {
+    const numA = parseInt(a.pageLabel.match(/\d+/)?.[0] || '0', 10);
+    const numB = parseInt(b.pageLabel.match(/\d+/)?.[0] || '0', 10);
+    return numA - numB;
+  });
+
   return groups;
 }
 
@@ -53,6 +68,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
   const [editText, setEditText] = useState('');
   const [isExportingDocx, setIsExportingDocx] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
+
+  useEffect(() => {
+    setSections(result.sections);
+  }, [result]);
 
   const triggerConfetti = () => {
     confetti({
