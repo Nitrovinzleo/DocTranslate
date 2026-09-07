@@ -158,7 +158,104 @@ export async function processPdfFile(
   onProgress?: (pct: number, stepMessage: string) => void
 ): Promise<ProcessedDocumentResult> {
   return withSilencedPdfParserLogs(async () => {
-    if (onProgress) onProgress(10, 'Lecture et analyse du document PDF...');
+    if (onProgress) onProgress(10, 'Lecture et préparation du document PDF...');
+
+    // 1. Direct Whole PDF Document Translation via Gemini 1.5 Flash (No image rendering or local OCR needed)
+    try {
+      if (onProgress) onProgress(25, 'Envoi du document PDF complet à l\'IA Gemini 1.5 Flash...');
+      const arrayBuffer = await file.arrayBuffer();
+      const base64Bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < base64Bytes.byteLength; i += chunkSize) {
+        const sub = base64Bytes.subarray(i, i + chunkSize);
+        binary += String.fromCharCode.apply(null, sub as any);
+      }
+      const pdfBase64 = `data:application/pdf;base64,${btoa(binary)}`;
+
+      const apiRes = await fetch('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pdfBase64,
+          sourceLang: options.sourceLang,
+          targetLang: options.targetLang,
+        }),
+        signal: AbortSignal.timeout(28000)
+      });
+
+      if (apiRes.ok) {
+        const apiData = await apiRes.json();
+        const fullText = apiData.fullDocumentText || apiData.translatedText || '';
+        if (fullText.trim()) {
+          if (onProgress) onProgress(80, 'Mise en page et génération du document traduit...');
+
+          const pageSections: DocumentSection[] = [];
+          const rawPages = fullText.split(/(?=\n?📌 Page \d+|\n?Page \d+ :)/i).filter((p: string) => p.trim().length > 0);
+
+          if (rawPages.length > 0) {
+            rawPages.forEach((pText: string, idx: number) => {
+              const cleaned = cleanGarbageSymbols(pText.trim());
+              if (cleaned) {
+                pageSections.push({
+                  id: `pdf-direct-p${idx + 1}`,
+                  originalText: `[Page ${idx + 1}]`,
+                  translatedText: cleaned,
+                  type: 'paragraph'
+                });
+              }
+            });
+          } else {
+            pageSections.push({
+              id: 'pdf-direct-full',
+              originalText: '[Document Complet]',
+              translatedText: cleanGarbageSymbols(fullText.trim()),
+              type: 'paragraph'
+            });
+          }
+
+          const pdfDoc = await PDFDocument.create();
+          const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+          const totalWords = fullText.split(/\s+/).filter(Boolean).length;
+
+          for (let pIdx = 0; pIdx < Math.max(1, pageSections.length); pIdx++) {
+            const pdfPage = pdfDoc.addPage([595, 842]);
+            const sec = pageSections[pIdx];
+            const textToDraw = sanitizeForPdf(sec ? sec.translatedText : fullText);
+            const lines = smartWrapTextToLines(textToDraw, 12, 535);
+
+            for (let lIdx = 0; lIdx < Math.min(50, lines.length); lIdx++) {
+              try {
+                pdfPage.drawText(lines[lIdx], {
+                  x: 30,
+                  y: 800 - (lIdx * 16),
+                  size: 11,
+                  font: fontRegular,
+                  color: rgb(0.1, 0.1, 0.2),
+                });
+              } catch (e) {}
+            }
+          }
+
+          if (onProgress) onProgress(100, 'Traduction intégrale par Gemini réussie !');
+
+          const pdfBytes = await pdfDoc.save();
+          return {
+            fileName: file.name.replace(/\.pdf$/i, `_traduit_${options.targetLang}.pdf`),
+            fileType: 'pdf',
+            sections: pageSections,
+            translatedBlob: new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' }),
+            stats: {
+              totalWords,
+              translatedWords: totalWords,
+              ocrImageCount: 0
+            }
+          };
+        }
+      }
+    } catch (directErr) {
+      console.warn('Direct PDF Gemini call fallback:', directErr);
+    }
 
     pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl || `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
 
