@@ -177,12 +177,9 @@ MANDATORY RULES:
     if (apiKey) {
       try {
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-        const prompt = `You are a world-class literary translator. Translate the following array of text blocks from ${sourceLang} to ${targetLang}.
+        const prompt = `You are a world-class literary translator. Translate the following array of text strings from ${sourceLang} to ${targetLang}.
 Maintain literary tone, humor, context, and proper idioms (e.g. 'DIARY OF A BRAT' -> "JOURNAL D'UNE PESTE").
-Return ONLY a JSON array of translated strings matching the exact size and order of the input array.
-
-Input JSON:
-${JSON.stringify(inputTexts)}`;
+Input strings: ${JSON.stringify(inputTexts)}`;
 
         const geminiRes = await fetch(geminiUrl, {
           method: 'POST',
@@ -190,8 +187,14 @@ ${JSON.stringify(inputTexts)}`;
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
             generationConfig: {
-              temperature: 0.2,
-              responseMimeType: 'application/json'
+              temperature: 0.1,
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: 'ARRAY',
+                items: {
+                  type: 'STRING'
+                }
+              }
             }
           }),
           signal: AbortSignal.timeout(12000)
@@ -216,6 +219,9 @@ ${JSON.stringify(inputTexts)}`;
               });
             }
           }
+        } else {
+          const errText = await geminiRes.text();
+          console.error('Gemini API Batch Error:', geminiRes.status, errText);
         }
       } catch (e) {
         console.warn('Gemini API Provider Fallback:', e);
