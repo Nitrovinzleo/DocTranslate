@@ -246,8 +246,9 @@ export async function processPdfFile(
         }
       }
 
-      const validItems = textItems.filter(item => item.str && item.str.trim().length > 0 && !isWatermarkItem(item));
-      const isImageOrScannedPage = validItems.length === 0;
+      const rawItems = textItems.filter(item => item.str && item.str.trim().length > 0);
+      const validItems = rawItems.filter(item => !isWatermarkItem(item));
+      const isImageOrScannedPage = rawItems.length === 0;
 
       if (isImageOrScannedPage) {
         if (options.ignoreImages) {
