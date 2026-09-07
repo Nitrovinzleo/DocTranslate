@@ -42,6 +42,53 @@ export default async function handler(req: Request) {
     const body = await req.json();
     const sourceLang = body.sourceLang || 'en';
     const targetLang = body.targetLang || 'fr';
+    const imageBase64 = body.imageBase64;
+
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+
+    // Handle multimodal slide/image OCR & translation via Gemini 1.5 Flash Vision
+    if (imageBase64 && apiKey) {
+      try {
+        const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+        const prompt = `You are a world-class document & slide translator. Extract ALL readable text from this presentation slide image, ignoring diagonal background watermark text (e.g. emails or dates). Translate all extracted text into ${targetLang} (French). Keep titles in uppercase and preserve paragraph structure. Return ONLY the translated French text.`;
+
+        const geminiRes = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: cleanBase64 } },
+                { text: prompt }
+              ]
+            }],
+            generationConfig: {
+              temperature: 0.1,
+            }
+          }),
+          signal: AbortSignal.timeout(14000)
+        });
+
+        if (geminiRes.ok) {
+          const geminiData = await geminiRes.json();
+          const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          const processed = applyDomainPostProcessing(rawText.trim(), sourceLang, targetLang);
+          return new Response(JSON.stringify({
+            translatedText: processed,
+            translatedTexts: [processed]
+          }), {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+            },
+          });
+        }
+      } catch (e) {
+        console.warn('Gemini Vision Image Translation fallback:', e);
+      }
+    }
 
     // Support single text string or batch array of texts
     const inputTexts: string[] = Array.isArray(body.texts)
@@ -59,8 +106,6 @@ export default async function handler(req: Request) {
         headers: { 'Content-Type': 'application/json' },
       });
     }
-
-    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
 
     // Provider 0: High-Intelligence Google Gemini 1.5 Flash API (If GEMINI_API_KEY configured)
     if (apiKey) {

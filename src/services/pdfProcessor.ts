@@ -218,7 +218,7 @@ export async function processPdfFile(
           continue;
         }
         // Scanned PDF page or PDF page with images/screenshots OCR
-        if (onProgress) onProgress(pageStartPct, `Page ${pageNum} (Image / Capture PDF) : Exécution de l'OCR local...`);
+        if (onProgress) onProgress(pageStartPct, `Page ${pageNum} (Diapositive Image) : Analyse IA Vision & OCR...`);
 
         const ocrScale = 1.8;
         const canvas = document.createElement('canvas');
@@ -230,6 +230,63 @@ export async function processPdfFile(
         const renderTask = (page as any).render({ canvasContext: ctx, viewport: ocrViewport, canvas } as any);
         await renderTask.promise;
 
+        let visionTranslatedText = '';
+        try {
+          const imageBase64 = canvas.toDataURL('image/jpeg', 0.82);
+          const visionRes = await fetch('/api/translate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              imageBase64,
+              sourceLang: options.sourceLang,
+              targetLang: options.targetLang,
+            }),
+            signal: AbortSignal.timeout(15000)
+          });
+
+          if (visionRes.ok) {
+            const visionData = await visionRes.json();
+            if (visionData.translatedText && visionData.translatedText.trim()) {
+              visionTranslatedText = visionData.translatedText.trim();
+            }
+          }
+        } catch (err) {
+          console.warn('Vision API slide translation fallback to local OCR:', err);
+        }
+
+        if (visionTranslatedText) {
+          ocrImageCount++;
+          const wordCount = visionTranslatedText.split(/\s+/).filter(Boolean).length;
+          totalWords += wordCount;
+
+          sections.push({
+            id: `pdf-ocr-${pageNum}-vision`,
+            originalText: `[Page ${pageNum} Image]`,
+            translatedText: `[Page ${pageNum} Image Traduit]:\n${visionTranslatedText}`,
+            type: 'paragraph'
+          });
+
+          const cleanTextForPdf = sanitizeForPdf(visionTranslatedText);
+          if (cleanTextForPdf) {
+            const fontSize = 12;
+            const maxW = viewport.width - 60;
+            const wrappedLines = smartWrapTextToLines(cleanTextForPdf, fontSize, maxW);
+            for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
+              try {
+                currentPage.drawText(wrappedLines[lIdx], {
+                  x: 30,
+                  y: Math.max(20, viewport.height - 40 - (lIdx * fontSize * 1.3)),
+                  size: fontSize,
+                  font: fontRegular,
+                  color: rgb(0.1, 0.1, 0.2),
+                });
+              } catch (e) {}
+            }
+          }
+          continue;
+        }
+
+        // Local Tesseract OCR Fallback
         const ocrResult = await performLocalOCR(canvas, options.sourceLang, (subPct: number, msg: string) => {
           const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
           if (onProgress) onProgress(scaled, msg);
