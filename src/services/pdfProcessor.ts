@@ -510,8 +510,7 @@ export async function processPdfFile(
         }
 
         // Mask original English text with white rectangle on initial page
-        const isSparseGraphicPage = pageNum === 1 || lineGroups.length <= 5;
-        if (!isSparseGraphicPage && !block.isFooterBrand && currentPage === initialPage) {
+        if (!block.isFooterBrand && currentPage === initialPage) {
           const maskHeight = Math.max(fontLineHeight * wrappedLines.length, 12);
           const maskY = Math.max(0, lineY - (wrappedLines.length - 1) * fontLineHeight - 1);
           const maskWidth = Math.min(viewport.width - block.minX, Math.max(block.maxX - block.minX + 4, 30));
