@@ -17,10 +17,10 @@ interface PageGroup {
 function cleanPrefix(text: string): string {
   if (!text) return '';
   return text
-    .replace(/^\[Page \d+ (?:OCR|OCR Traduit|Traduit)\]:\s*/i, '')
-    .replace(/^\[Diapositive \d+ - Image OCR(?: Traduit)?\]:\s*/i, '')
+    .replace(/^\[Page \d+ (?:OCR|OCR Traduit|Traduit|Image|Image Traduit)\]:\s*/i, '')
+    .replace(/^\[Diapositive \d+ (?:Image|Image OCR|OCR)(?: Traduit)?\]:\s*/i, '')
     .replace(/^\[Diapositive \d+(?: Traduit)?\]:\s*/i, '')
-    .replace(/^\[Image (?:Diapositive|PowerPoint|Word)? OCR(?: Traduit)?\]:\s*/i, '')
+    .replace(/^\[Image (?:Diapositive|PowerPoint|Word)? (?:OCR|OCR Traduit|Traduit)?\]:\s*/i, '')
     .replace(/^\[.*?\]:\s*/i, '')
     .trim();
 }
