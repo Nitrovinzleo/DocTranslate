@@ -50,7 +50,14 @@ export default async function handler(req: Request) {
       try {
         const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-        const prompt = `You are a world-class document & slide translator. Extract ALL readable text from this presentation slide image, ignoring diagonal background watermark text (e.g. emails or dates). Translate all extracted text into ${targetLang} (French). Keep titles in uppercase and preserve paragraph structure. Return ONLY the translated French text.`;
+        const prompt = `You are an expert document and presentation slide translator.
+Your job is to read all text from this presentation slide image and translate it to ${targetLang === 'fr' ? 'French' : targetLang}.
+
+MANDATORY RULES:
+1. Extract and translate ALL titles, headings, subtitles, bullet points, and body paragraphs.
+2. ABSOLUTELY IGNORE and REMOVE all background watermarks, email stamps, dates (e.g. coralie.boitrelle-laigle@gulli.fr), logo brand text (e.g. Mojang, 9 Story, Brown Bag), footer notices (e.g. Microsoft Confidential), and random symbols.
+3. DO NOT output any garbled symbols, logo artifacts, or OCR noise (like "moJ", "stony", "ARE x", "& & A").
+4. Return ONLY clean, fluent, beautifully formatted French text with titles in bold/uppercase and natural paragraph spacing.`;
 
         const geminiRes = await fetch(geminiUrl, {
           method: 'POST',

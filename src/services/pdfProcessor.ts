@@ -89,6 +89,38 @@ function isWatermarkItem(item: any): boolean {
   return false;
 }
 
+function cleanGarbageSymbols(text: string): string {
+  if (!text) return '';
+  const lines = text.split(/\r?\n/);
+  const cleanLines = lines.filter(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return false;
+
+    // Filter logo noise, brand artifacts, and watermark remnants
+    if (/^(moJ|9 STORY|BROWN BAG|Microsoft Confidential|stony|ARE x|gulli\.fr|\d{2}\/\d{2}\/\d{4})/i.test(trimmed)) {
+      return false;
+    }
+    if (/^(moJ|ARE x|stony|Vo Ky|\[\d+ - <|wl l ’|EAS,|& & A)/i.test(trimmed)) {
+      return false;
+    }
+
+    // Filter lines containing mostly garbled symbols
+    const letterCount = (trimmed.match(/[\p{L}\p{N}]/gu) || []).length;
+    if (trimmed.length > 4 && letterCount / trimmed.length < 0.45) {
+      return false;
+    }
+
+    // Filter short single-letter symbol lines
+    if (trimmed.length <= 3 && !/^[A-Z0-9]{1,3}$/i.test(trimmed)) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return cleanLines.join('\n').trim();
+}
+
 /**
  * Helper to execute PDF parsing operations with internal pdf-lib / pdf.js warning logs silenced.
  */
@@ -255,6 +287,10 @@ export async function processPdfFile(
           }
         } catch (err) {
           console.warn('Vision API slide translation fallback to local OCR:', err);
+        }
+
+        if (visionTranslatedText) {
+          visionTranslatedText = cleanGarbageSymbols(visionTranslatedText);
         }
 
         if (visionTranslatedText) {
