@@ -77,14 +77,19 @@ function isWatermarkItem(item: any): boolean {
   const str = item.str.trim();
   if (!str) return true;
 
-  // 1. Watermark keywords
-  const watermarkRegex = /^(gaumont|watermark|draft|brouillon|confidentiel|confidential|do not copy|specimen|sample|copie|privé|private)$/i;
-  if (watermarkRegex.test(str)) return true;
-
-  // 2. Specific watermark email / stamp patterns (e.g. coralie.boitrelle-laigle@gulli.fr 22/07/2026)
-  if (/@gulli\.fr/i.test(str) || /^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
+  // 1. Match any fragment of the diagonal watermark email / date stamp (coralie, boitrelle, laigle, gulli, 22/07/2026)
+  if (/(coralie|boitrelle|laigle|gulli|22\/07\/2026|\d{2}\/\d{2}\/\d{4})/i.test(str)) {
     return true;
   }
+
+  // 2. Match brand logo headers/footers (Mojang Studios, 9 Story Media, Brown Bag Films, Microsoft Confidential)
+  if (/(mojang|9 story|brown bag|microsoft confidential|gaumont|watermark|brouillon|confidentiel|confidential)/i.test(str)) {
+    return true;
+  }
+
+  // 3. Match common watermark keywords
+  const watermarkRegex = /^(gaumont|watermark|draft|brouillon|confidentiel|confidential|do not copy|specimen|sample|copie|privé|private)$/i;
+  if (watermarkRegex.test(str)) return true;
 
   return false;
 }
@@ -97,7 +102,7 @@ function cleanGarbageSymbols(text: string): string {
     if (!trimmed) return false;
 
     // Filter logo noise, brand artifacts, and watermark remnants
-    if (/^(moJ|9 STORY|BROWN BAG|Microsoft Confidential|stony|ARE x|gulli\.fr|\d{2}\/\d{2}\/\d{4})/i.test(trimmed)) {
+    if (/(coralie|boitrelle|laigle|gulli|22\/07\/2026|moJ|9 STORY|BROWN BAG|Microsoft Confidential|stony|ARE x)/i.test(trimmed)) {
       return false;
     }
     if (/^(moJ|ARE x|stony|Vo Ky|\[\d+ - <|wl l ’|EAS,|& & A)/i.test(trimmed)) {
