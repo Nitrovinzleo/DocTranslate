@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Download, Edit3, Check, RefreshCw, FileText, Image, ShieldCheck, FileDown } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Download, Edit3, Check, RefreshCw, FileText, Image, ShieldCheck, FileDown, Copy, CheckCheck, Layers } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import type { ProcessedDocumentResult, DocumentSection } from '../services/docxProcessor';
 import { generateTextOnlyDocxBlob } from '../services/docxExporter';
@@ -9,11 +9,50 @@ interface DocumentViewerProps {
   onReset: () => void;
 }
 
+interface PageGroup {
+  pageLabel: string;
+  sections: DocumentSection[];
+}
+
+function cleanPrefix(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/^\[Page \d+ (?:OCR|OCR Traduit)\]:\s*/i, '')
+    .replace(/^\[Diapositive \d+ - Image OCR(?: Traduit)?\]:\s*/i, '')
+    .replace(/^\[Image (?:Diapositive|PowerPoint|Word)? OCR(?: Traduit)?\]:\s*/i, '')
+    .replace(/^\[.*?\]:\s*/i, '')
+    .trim();
+}
+
+function groupSectionsByPage(sections: DocumentSection[]): PageGroup[] {
+  const groups: PageGroup[] = [];
+  let currentLabel = '';
+  let currentGroup: PageGroup | null = null;
+
+  for (const sec of sections) {
+    const raw = sec.originalText || sec.translatedText || '';
+    const match = raw.match(/^(?:\[)?(Page \d+|Diapositive \d+|Slide \d+)/i);
+    const label = match ? match[1] : 'Page 1';
+
+    if (!currentGroup || currentLabel !== label) {
+      if (currentGroup) groups.push(currentGroup);
+      currentLabel = label;
+      currentGroup = { pageLabel: label, sections: [sec] };
+    } else {
+      currentGroup.sections.push(sec);
+    }
+  }
+
+  if (currentGroup) groups.push(currentGroup);
+  return groups;
+}
+
 export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset }) => {
   const [sections, setSections] = useState<DocumentSection[]>(result.sections);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const [isExportingDocx, setIsExportingDocx] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
 
   const triggerConfetti = () => {
     confetti({
@@ -42,7 +81,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
       triggerConfetti();
 
       const baseName = result.fileName.replace(/\.(pdf|docx|pptx)$/i, '');
-      const docxFileName = `${baseName}_texte_seul.docx`;
+      const docxFileName = `${baseName}_texte_traduit.docx`;
 
       const url = URL.createObjectURL(docxBlob);
       const a = document.createElement('a');
@@ -60,6 +99,18 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
     }
   };
 
+  const handleCopyAllText = () => {
+    const pageGroups = groupSectionsByPage(sections);
+    const fullMarkdown = pageGroups.map(group => {
+      const pageContent = group.sections.map(s => cleanPrefix(s.translatedText)).filter(Boolean).join('\n\n');
+      return `--- ${group.pageLabel} ---\n\n${pageContent}`;
+    }).join('\n\n=====================\n\n');
+
+    navigator.clipboard.writeText(fullMarkdown);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2500);
+  };
+
   const startEdit = (section: DocumentSection) => {
     setEditingId(section.id);
     setEditText(section.translatedText);
@@ -72,30 +123,33 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
     setEditingId(null);
   };
 
+  const pageGroups = useMemo(() => groupSectionsByPage(sections), [sections]);
+
   return (
     <div className="w-full space-y-6 animate-fadeIn">
       
-      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 overflow-hidden">
+      {/* Top Banner & Main Actions */}
+      <div className="bg-slate-900/95 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 overflow-hidden backdrop-blur-md">
         
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="px-3 py-1 rounded-full bg-emerald-950/80 border border-emerald-800 text-xs font-semibold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5" /> Traduction Prête (Confidentielle)
+            <span className="px-3 py-1 rounded-full bg-emerald-950/80 border border-emerald-800 text-xs font-semibold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" /> Traduction Réussie & Structurée
             </span>
           </div>
 
-          <h2 className="text-lg sm:text-xl font-extrabold text-white mt-2 truncate max-w-full lg:max-w-xl">
+          <h2 className="text-xl sm:text-2xl font-extrabold text-white mt-2 truncate max-w-full lg:max-w-xl">
             {result.fileName}
           </h2>
 
           <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs text-slate-400 mt-1 font-medium">
             <span>Mots traités : <strong className="text-slate-200">{result.stats.totalWords}</strong></span>
             <span>•</span>
-            <span>Segments : <strong className="text-slate-200">{sections.length}</strong></span>
+            <span>Pages / Sections : <strong className="text-slate-200">{pageGroups.length}</strong></span>
             {result.stats.ocrImageCount > 0 && (
               <>
                 <span>•</span>
-                <span className="text-purple-400 flex items-center gap-1">
+                <span className="text-purple-400 flex items-center gap-1 font-semibold">
                   <Image className="w-3.5 h-3.5" />
                   <strong>{result.stats.ocrImageCount}</strong> image(s) OCR traduite(s)
                 </span>
@@ -107,10 +161,19 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto shrink-0 flex-wrap">
           <button
             onClick={onReset}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all shrink-0 whitespace-nowrap cursor-pointer"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all shrink-0 cursor-pointer"
           >
             <RefreshCw className="w-4 h-4" />
             <span>Nouveau document</span>
+          </button>
+
+          <button
+            onClick={handleCopyAllText}
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold transition-all cursor-pointer shrink-0 whitespace-nowrap"
+            title="Copier tout le texte traduit dans le presse-papier"
+          >
+            {isCopied ? <CheckCheck className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-cyan-400" />}
+            <span>{isCopied ? 'Texte copié !' : 'Copier tout le texte'}</span>
           </button>
 
           <button
@@ -134,73 +197,97 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
 
       </div>
 
-      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-2xl">
-        <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
-          <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-            <FileText className="w-4 h-4 text-cyan-400" />
-            <span>Prévisualisation côte à côte & Édition manuelle</span>
+      {/* Main Preview Container Grouped by Page/Slide */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-6">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+          <h3 className="text-base font-extrabold text-white flex items-center gap-2">
+            <FileText className="w-5 h-5 text-cyan-400" />
+            <span>Prévisualisation & Traduction Structurée (Par Page / Diapositive)</span>
           </h3>
-          <span className="text-xs text-slate-500">
-            Cliquez sur l'icône de crayon pour ajuster un texte avant le téléchargement
+          <span className="text-xs text-slate-400 hidden sm:inline">
+            Cliquez sur l'icône de crayon pour éditer un segment avant le téléchargement
           </span>
         </div>
 
-        <div className="space-y-3 max-h-[550px] overflow-y-auto pr-2 custom-scrollbar">
-          {sections.map((sec, idx) => (
-            <div
-              key={sec.id || idx}
-              className={`grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-2xl border transition-all ${
-                sec.type === 'image-ocr'
-                  ? 'bg-purple-950/20 border-purple-800/40'
-                  : 'bg-slate-950/60 border-slate-850 hover:border-slate-700'
-              }`}
-            >
-              <div className="space-y-1">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                  Original ({sec.type})
+        <div className="space-y-6 max-h-[650px] overflow-y-auto pr-2 custom-scrollbar">
+          {pageGroups.map((group, groupIdx) => (
+            <div key={groupIdx} className="bg-slate-950/80 border border-slate-800/80 rounded-2xl p-5 space-y-4 shadow-md">
+              
+              <div className="flex items-center justify-between pb-2 border-b border-slate-800/60">
+                <span className="px-3 py-1 rounded-xl bg-cyan-950/80 border border-cyan-800/60 text-cyan-300 text-xs font-bold flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                  {group.pageLabel}
                 </span>
-                <p className="text-xs text-slate-300 leading-relaxed font-mono bg-slate-900/50 p-2.5 rounded-xl border border-slate-800/50">
-                  {sec.originalText}
-                </p>
+                <span className="text-[11px] text-slate-500 font-medium">
+                  {group.sections.length} segment(s)
+                </span>
               </div>
 
-              <div className="space-y-1 relative group">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-cyan-400">
-                    Traduction
-                  </span>
-                  {editingId !== sec.id && (
-                    <button
-                      onClick={() => startEdit(sec)}
-                      className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-cyan-400 transition-opacity"
-                      title="Éditer le texte"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
+              <div className="space-y-3">
+                {group.sections.map((sec, idx) => {
+                  const originalClean = cleanPrefix(sec.originalText);
+                  const translatedClean = cleanPrefix(sec.translatedText);
 
-                {editingId === sec.id ? (
-                  <div className="flex items-center gap-2">
-                    <textarea
-                      value={editText}
-                      onChange={(e) => setEditText(e.target.value)}
-                      className="w-full text-xs text-white bg-slate-900 border border-cyan-500 rounded-xl p-2.5 focus:outline-none"
-                      rows={2}
-                    />
-                    <button
-                      onClick={() => saveEdit(sec.id)}
-                      className="p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl"
+                  return (
+                    <div
+                      key={sec.id || idx}
+                      className={`grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-xl border transition-all ${
+                        sec.type === 'image-ocr'
+                          ? 'bg-purple-950/30 border-purple-800/40'
+                          : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+                      }`}
                     >
-                      <Check className="w-4 h-4" />
-                    </button>
-                  </div>
-                ) : (
-                  <p className="text-xs text-cyan-100 font-medium leading-relaxed bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
-                    {sec.translatedText}
-                  </p>
-                )}
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                          Original {sec.type === 'image-ocr' && '(OCR Image)'}
+                        </span>
+                        <p className="text-xs text-slate-300 leading-relaxed font-sans bg-slate-950/60 p-3 rounded-xl border border-slate-800/50 whitespace-pre-wrap">
+                          {originalClean || sec.originalText}
+                        </p>
+                      </div>
+
+                      <div className="space-y-1 relative group">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400">
+                            Traduction
+                          </span>
+                          {editingId !== sec.id && (
+                            <button
+                              onClick={() => startEdit(sec)}
+                              className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-cyan-400 transition-opacity cursor-pointer"
+                              title="Éditer la traduction"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {editingId === sec.id ? (
+                          <div className="flex items-center gap-2">
+                            <textarea
+                              value={editText}
+                              onChange={(e) => setEditText(e.target.value)}
+                              className="w-full text-xs text-white bg-slate-950 border border-cyan-500 rounded-xl p-3 focus:outline-none"
+                              rows={3}
+                            />
+                            <button
+                              onClick={() => saveEdit(sec.id)}
+                              className="p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl cursor-pointer shrink-0"
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-cyan-100 font-medium leading-relaxed bg-slate-950/90 p-3 rounded-xl border border-cyan-900/40 whitespace-pre-wrap">
+                            {translatedClean || sec.translatedText}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
+
             </div>
           ))}
         </div>
@@ -209,3 +296,4 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({ result, onReset 
     </div>
   );
 };
+
