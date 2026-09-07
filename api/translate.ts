@@ -29,6 +29,39 @@ function applyDomainPostProcessing(text: string, src: string, tgt: string): stri
   return result;
 }
 
+async function callGeminiApi(apiKey: string, payload: any, timeoutMs = 12000): Promise<Response | null> {
+  const endpointCandidates = [
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+    'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent',
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent'
+  ];
+
+  for (const baseUrl of endpointCandidates) {
+    try {
+      const res = await fetch(`${baseUrl}?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+
+      if (res.ok) {
+        return res;
+      }
+
+      const errText = await res.text();
+      console.warn(`Gemini endpoint ${baseUrl} returned ${res.status}: ${errText.substring(0, 200)}`);
+
+      if (res.status !== 404) {
+        return res;
+      }
+    } catch (e) {
+      console.warn(`Gemini endpoint ${baseUrl} fetch error:`, e);
+    }
+  }
+  return null;
+}
+
 export default async function handler(req: Request) {
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -50,7 +83,6 @@ export default async function handler(req: Request) {
     if (pdfBase64 && apiKey) {
       try {
         const cleanPdfBase64 = pdfBase64.replace(/^data:application\/pdf;base64,/, '');
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
         const prompt = `You are a world-class document and presentation translator.
 Read this complete presentation PDF document carefully page by page.
 
@@ -61,22 +93,17 @@ MANDATORY TRANSLATION RULES:
 4. DO NOT output any garbled symbols, logo artifacts, or OCR noise.
 5. Return ONLY clean, fluent, beautifully formatted French text with titles in bold/uppercase and natural paragraph spacing.`;
 
-        const geminiRes = await fetch(geminiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { inlineData: { mimeType: 'application/pdf', data: cleanPdfBase64 } },
-                { text: prompt }
-              ]
-            }],
-            generationConfig: {
-              temperature: 0.1,
-            }
-          }),
-          signal: AbortSignal.timeout(28000)
-        });
+        const geminiRes = await callGeminiApi(apiKey, {
+          contents: [{
+            parts: [
+              { inlineData: { mimeType: 'application/pdf', data: cleanPdfBase64 } },
+              { text: prompt }
+            ]
+          }],
+          generationConfig: {
+            temperature: 0.1,
+          }
+        }, 28000);
 
         if (geminiRes.ok) {
           const geminiData = await geminiRes.json();
@@ -106,7 +133,6 @@ MANDATORY TRANSLATION RULES:
     if (imageBase64 && apiKey) {
       try {
         const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
         const prompt = `You are an expert document and presentation slide translator.
 Your job is to read all text from this presentation slide image and translate it to ${targetLang === 'fr' ? 'French' : targetLang}.
 
@@ -116,24 +142,19 @@ MANDATORY RULES:
 3. DO NOT output any garbled symbols, logo artifacts, or OCR noise (like "moJ", "stony", "ARE x", "& & A").
 4. Return ONLY clean, fluent, beautifully formatted French text with titles in bold/uppercase and natural paragraph spacing.`;
 
-        const geminiRes = await fetch(geminiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { inlineData: { mimeType: 'image/jpeg', data: cleanBase64 } },
-                { text: prompt }
-              ]
-            }],
-            generationConfig: {
-              temperature: 0.1,
-            }
-          }),
-          signal: AbortSignal.timeout(14000)
-        });
+        const geminiRes = await callGeminiApi(apiKey, {
+          contents: [{
+            parts: [
+              { inlineData: { mimeType: 'image/jpeg', data: cleanBase64 } },
+              { text: prompt }
+            ]
+          }],
+          generationConfig: {
+            temperature: 0.1,
+          }
+        }, 14000);
 
-        if (geminiRes.ok) {
+        if (geminiRes && geminiRes.ok) {
           const geminiData = await geminiRes.json();
           const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
           const processed = applyDomainPostProcessing(rawText.trim(), sourceLang, targetLang);
@@ -147,9 +168,6 @@ MANDATORY RULES:
               'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
             },
           });
-        } else {
-          const errText = await geminiRes.text();
-          console.error('Gemini Vision API Error Status:', geminiRes.status, errText);
         }
       } catch (e) {
         console.warn('Gemini Vision Image Translation fallback:', e);
@@ -176,31 +194,25 @@ MANDATORY RULES:
     // Provider 0: High-Intelligence Google Gemini 1.5 Flash API (If GEMINI_API_KEY configured)
     if (apiKey) {
       try {
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
         const prompt = `You are a world-class literary translator. Translate the following array of text strings from ${sourceLang} to ${targetLang}.
 Maintain literary tone, humor, context, and proper idioms (e.g. 'DIARY OF A BRAT' -> "JOURNAL D'UNE PESTE").
 Input strings: ${JSON.stringify(inputTexts)}`;
 
-        const geminiRes = await fetch(geminiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              temperature: 0.1,
-              responseMimeType: 'application/json',
-              responseSchema: {
-                type: 'ARRAY',
-                items: {
-                  type: 'STRING'
-                }
+        const geminiRes = await callGeminiApi(apiKey, {
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.1,
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: 'ARRAY',
+              items: {
+                type: 'STRING'
               }
             }
-          }),
-          signal: AbortSignal.timeout(12000)
-        });
+          }
+        }, 12000);
 
-        if (geminiRes.ok) {
+        if (geminiRes && geminiRes.ok) {
           const geminiData = await geminiRes.json();
           const rawResponseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
           if (rawResponseText) {
@@ -219,9 +231,6 @@ Input strings: ${JSON.stringify(inputTexts)}`;
               });
             }
           }
-        } else {
-          const errText = await geminiRes.text();
-          console.error('Gemini API Batch Error:', geminiRes.status, errText);
         }
       } catch (e) {
         console.warn('Gemini API Provider Fallback:', e);
