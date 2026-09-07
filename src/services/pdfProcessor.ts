@@ -212,90 +212,105 @@ export async function processPdfFile(
         }
       }
 
-    if (textItems.length === 0) {
-      if (options.ignoreImages) {
-        // Skip scanned image OCR when ignoring images
-        continue;
-      }
-      // Scanned PDF page OCR
-      if (onProgress) onProgress(pageStartPct, `Page ${pageNum} scannée : Exécution de l'OCR local...`);
-      ocrImageCount++;
+      const validItems = textItems.filter(item => item.str && item.str.trim().length > 0 && !isWatermarkItem(item));
+      const totalValidChars = validItems.reduce((acc, item) => acc + item.str.trim().length, 0);
 
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
+      const isImageOrScannedPage = validItems.length === 0 || (totalValidChars < 15 && !options.ignoreImages);
 
-      const renderTask = (page as any).render({ canvasContext: ctx, viewport, canvas } as any);
-      await renderTask.promise;
+      if (isImageOrScannedPage) {
+        if (options.ignoreImages) {
+          // Skip scanned image OCR when ignoring images
+          continue;
+        }
+        // Scanned PDF page or PDF page with images/screenshots OCR
+        if (onProgress) onProgress(pageStartPct, `Page ${pageNum} (Image / Capture PDF) : Exécution de l'OCR local...`);
 
-      const ocrResult = await performLocalOCR(canvas, options.sourceLang, (subPct: number, msg: string) => {
-        const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
-        if (onProgress) onProgress(scaled, msg);
-      });
+        const ocrScale = 1.8;
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const ocrViewport = page.getViewport({ scale: ocrScale });
+        canvas.width = ocrViewport.width;
+        canvas.height = ocrViewport.height;
 
-      const ocrLines = ocrResult.lines || [];
-      const rawOcrTexts = ocrLines.map(l => l.text.trim()).filter(Boolean);
-      const translatedOcrBatch = await translateTextBatch(rawOcrTexts, {
-        ...options,
-        onProgress: (subPct, msg) => {
+        const renderTask = (page as any).render({ canvasContext: ctx, viewport: ocrViewport, canvas } as any);
+        await renderTask.promise;
+
+        const ocrResult = await performLocalOCR(canvas, options.sourceLang, (subPct: number, msg: string) => {
           const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
           if (onProgress) onProgress(scaled, msg);
-        }
-      });
-
-      for (let idx = 0; idx < ocrLines.length; idx++) {
-        const line = ocrLines[idx];
-        const originalText = line.text.trim();
-        if (!originalText) continue;
-
-        const translatedText = translatedOcrBatch[idx] || originalText;
-        totalWords += originalText.split(/\s+/).filter(Boolean).length;
-
-        sections.push({
-          id: `pdf-ocr-${pageNum}-${line.bbox.y0}`,
-          originalText: `[Page ${pageNum} OCR]: ${originalText}`,
-          translatedText: `[Page ${pageNum} OCR Traduit]: ${translatedText}`,
-          type: 'image-ocr'
         });
 
-        const cleanTextForPdf = sanitizeForPdf(translatedText);
-        if (cleanTextForPdf) {
-          const fontHeight = Math.max(9, Math.min(16, (line.bbox.y1 - line.bbox.y0)));
-          const maxW = Math.max(40, viewport.width - line.bbox.x0 - 20);
-          const wrappedLines = smartWrapTextToLines(cleanTextForPdf, fontHeight, maxW);
+        const ocrLines = ocrResult.lines || [];
+        if (ocrLines.length > 0) {
+          ocrImageCount++;
+        }
 
-          // Erase background box for OCR line
-          const boxY = Math.max(0, viewport.height - line.bbox.y1 - 2);
-          const boxH = Math.max(fontHeight * 1.3, line.bbox.y1 - line.bbox.y0 + 4);
-          try {
-            currentPage.drawRectangle({
-              x: Math.max(0, line.bbox.x0 - 4),
-              y: boxY,
-              width: Math.min(viewport.width - line.bbox.x0, (line.bbox.x1 - line.bbox.x0) + 8),
-              height: boxH,
-              color: rgb(1, 1, 1),
-            });
-          } catch (e) {}
+        const rawOcrTexts = ocrLines.map(l => l.text.trim()).filter(Boolean);
+        const translatedOcrBatch = await translateTextBatch(rawOcrTexts, {
+          ...options,
+          onProgress: (subPct, msg) => {
+            const scaled = pageStartPct + Math.round((subPct / 100) * (pageEndPct - pageStartPct));
+            if (onProgress) onProgress(scaled, msg);
+          }
+        });
 
-          for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
+        for (let idx = 0; idx < ocrLines.length; idx++) {
+          const line = ocrLines[idx];
+          const originalText = line.text.trim();
+          if (!originalText) continue;
+
+          const translatedText = translatedOcrBatch[idx] || originalText;
+          totalWords += originalText.split(/\s+/).filter(Boolean).length;
+
+          // Convert pixel coordinates back to PDF points
+          const pdfX0 = line.bbox.x0 / ocrScale;
+          const pdfY0 = line.bbox.y0 / ocrScale;
+          const pdfX1 = line.bbox.x1 / ocrScale;
+          const pdfY1 = line.bbox.y1 / ocrScale;
+
+          sections.push({
+            id: `pdf-ocr-${pageNum}-${idx}`,
+            originalText: `[Page ${pageNum} OCR]: ${originalText}`,
+            translatedText: `[Page ${pageNum} OCR Traduit]: ${translatedText}`,
+            type: 'image-ocr'
+          });
+
+          const cleanTextForPdf = sanitizeForPdf(translatedText);
+          if (cleanTextForPdf) {
+            const fontHeight = Math.max(9, Math.min(16, (pdfY1 - pdfY0)));
+            const maxW = Math.max(40, viewport.width - pdfX0 - 20);
+            const wrappedLines = smartWrapTextToLines(cleanTextForPdf, fontHeight, maxW);
+
+            // Erase background box for OCR line
+            const boxY = Math.max(0, viewport.height - pdfY1 - 2);
+            const boxH = Math.max(fontHeight * 1.3, pdfY1 - pdfY0 + 4);
             try {
-              currentPage.drawText(wrappedLines[lIdx], {
-                x: Math.max(10, Math.min(viewport.width - 50, line.bbox.x0)),
-                y: Math.max(10, viewport.height - line.bbox.y1 - (lIdx * fontHeight * 1.15)),
-                size: fontHeight,
-                font: fontRegular,
-                color: rgb(0.1, 0.1, 0.2),
+              currentPage.drawRectangle({
+                x: Math.max(0, pdfX0 - 4),
+                y: boxY,
+                width: Math.min(viewport.width - pdfX0, (pdfX1 - pdfX0) + 8),
+                height: boxH,
+                color: rgb(1, 1, 1),
               });
-            } catch (e) {
-              console.warn('PDF draw OCR line warning:', e);
+            } catch (e) {}
+
+            for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
+              try {
+                currentPage.drawText(wrappedLines[lIdx], {
+                  x: Math.max(10, Math.min(viewport.width - 50, pdfX0)),
+                  y: Math.max(10, viewport.height - pdfY1 - (lIdx * fontHeight * 1.15)),
+                  size: fontHeight,
+                  font: fontRegular,
+                  color: rgb(0.1, 0.1, 0.2),
+                });
+              } catch (e) {
+                console.warn('PDF draw OCR line warning:', e);
+              }
             }
           }
         }
-      }
-    } else {
-      // Vector PDF text items: Group items into horizontal lines (excluding watermarks)
-      const validItems = textItems.filter(item => item.str && item.str.trim().length > 0 && !isWatermarkItem(item));
+      } else {
+        // Vector PDF text items: Group items into horizontal lines (excluding watermarks)
 
       interface LineItem {
         str: string;
