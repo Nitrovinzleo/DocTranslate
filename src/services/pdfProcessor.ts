@@ -293,11 +293,15 @@ export async function processPdfFile(
         });
 
         const ocrLines = ocrResult.lines || [];
-        if (ocrLines.length > 0) {
+        let rawOcrTexts = ocrLines.map(l => l.text.trim()).filter(Boolean);
+        if (rawOcrTexts.length === 0 && ocrResult.text && ocrResult.text.trim()) {
+          rawOcrTexts = [ocrResult.text.trim()];
+        }
+
+        if (rawOcrTexts.length > 0) {
           ocrImageCount++;
         }
 
-        const rawOcrTexts = ocrLines.map(l => l.text.trim()).filter(Boolean);
         const translatedOcrBatch = await translateTextBatch(rawOcrTexts, {
           ...options,
           onProgress: (subPct, msg) => {
@@ -305,6 +309,38 @@ export async function processPdfFile(
             if (onProgress) onProgress(scaled, msg);
           }
         });
+
+        if (ocrLines.length === 0 && rawOcrTexts.length > 0) {
+          const originalText = rawOcrTexts[0];
+          const translatedText = translatedOcrBatch[0] || originalText;
+          totalWords += originalText.split(/\s+/).filter(Boolean).length;
+
+          sections.push({
+            id: `pdf-ocr-${pageNum}-full`,
+            originalText: `[Page ${pageNum} OCR]: ${originalText}`,
+            translatedText: `[Page ${pageNum} OCR Traduit]: ${translatedText}`,
+            type: 'paragraph'
+          });
+
+          const cleanTextForPdf = sanitizeForPdf(translatedText);
+          if (cleanTextForPdf) {
+            const fontSize = 12;
+            const maxW = viewport.width - 60;
+            const wrappedLines = smartWrapTextToLines(cleanTextForPdf, fontSize, maxW);
+            for (let lIdx = 0; lIdx < wrappedLines.length; lIdx++) {
+              try {
+                currentPage.drawText(wrappedLines[lIdx], {
+                  x: 30,
+                  y: Math.max(20, viewport.height - 40 - (lIdx * fontSize * 1.3)),
+                  size: fontSize,
+                  font: fontRegular,
+                  color: rgb(0.1, 0.1, 0.2),
+                });
+              } catch (e) {}
+            }
+          }
+          continue;
+        }
 
         for (let idx = 0; idx < ocrLines.length; idx++) {
           const line = ocrLines[idx];
