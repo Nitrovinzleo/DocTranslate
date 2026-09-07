@@ -1,4 +1,5 @@
 import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { translateTextBatch } from './translatorEngine';
 import type { TranslationOptions } from './translatorEngine';
@@ -131,7 +132,7 @@ export async function processPdfFile(
   return withSilencedPdfParserLogs(async () => {
     if (onProgress) onProgress(10, 'Lecture et analyse du document PDF...');
 
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl || `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
 
     const arrayBuffer = await file.arrayBuffer();
     const pdfjsDoc = await pdfjsLib.getDocument({
